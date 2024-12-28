@@ -4,15 +4,15 @@
 use proc_macro_error::emit_warning;
 use syn::spanned::Spanned;
 
+use super::html_element::{HtmlElement, TagName};
+use super::HtmlTree;
 use crate::props::{ElementProps, Prop};
-
-use super::html_element::TagName;
-use super::{html_element::HtmlElement, HtmlTree};
 
 /// Lints HTML elements to check if they are well formed. If the element is not well-formed, then
 /// use `proc-macro-error` (and the `emit_warning!` macro) to produce a warning. At present, these
 /// are only emitted on nightly.
 pub trait Lint {
+    #[cfg_attr(not(yew_lints), allow(dead_code))]
     fn lint(element: &HtmlElement);
 }
 
@@ -27,6 +27,9 @@ pub fn lint<L>(tree: &HtmlTree)
 where
     L: Lint,
 {
+    #[cfg(not(yew_lints))]
+    let _ = tree;
+    #[cfg(yew_lints)]
     match tree {
         HtmlTree::List(list) => {
             for child in &list.children.0 {
@@ -65,11 +68,11 @@ impl Lint for AHrefLint {
                         match href_value.as_ref() {
                             "#" | "javascript:void(0)" => emit_warning!(
                                 lit.span(),
-                                format!("'{}' is not a suitable value for the `href` attribute. \
+                                format!("'{href_value}' is not a suitable value for the `href` attribute. \
                                         Without a meaningful attribute assistive technologies \
                                         will struggle to understand your webpage. \
                                         https://developer.mozilla.org/en-US/docs/Learn/Accessibility/HTML#onclick_events"
-                            ,href_value)),
+                            )),
                             _ => {}
 
                         }
@@ -100,7 +103,7 @@ impl Lint for ImgAltLint {
                 emit_warning!(
                     quote::quote! {#tag_name}.span(),
                     "All `<img>` tags should have an `alt` attribute which provides a \
-                        human-readable description "
+                     human-readable description "
                 )
             }
         }

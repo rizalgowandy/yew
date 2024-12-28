@@ -7,10 +7,18 @@ The contents of the selected file are then rendered to the page either as a whol
 
 ## Concepts
 
-Demonstrates reading from files in Yew with the help of [`gloo::file`](https://gloo-rs.web.app/docs/file).
+Demonstrates reading from files in Yew with the help of [`gloo::file`](https://docs.rs/gloo-file/latest/gloo_file/).
 
 ## Improvements
 
 - Show a progress bar if the file is read in chunks
 - Do something interesting with the uploaded file like displaying pictures
 - Improve the presentation of the example with CSS.
+
+## Running
+
+Run this application with the trunk development server:
+
+```bash
+trunk serve --open
+```

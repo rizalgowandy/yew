@@ -1,8 +1,9 @@
-use crate::components::pagination::PageQuery;
-use crate::components::{pagination::Pagination, post_card::PostCard};
-use crate::Route;
 use yew::prelude::*;
 use yew_router::prelude::*;
+
+use crate::components::pagination::{PageQuery, Pagination};
+use crate::components::post_card::PostCard;
+use crate::Route;
 
 const ITEMS_PER_PAGE: u64 = 10;
 const TOTAL_PAGES: u64 = u64::MAX / ITEMS_PER_PAGE;
@@ -13,7 +14,7 @@ pub enum Msg {
 
 pub struct PostList {
     page: u64,
-    _listener: HistoryListener,
+    _listener: LocationHandle,
 }
 
 fn current_page(ctx: &Context<PostList>) -> u64 {
@@ -28,9 +29,10 @@ impl Component for PostList {
 
     fn create(ctx: &Context<Self>) -> Self {
         let link = ctx.link().clone();
-        let listener = ctx.link().history().unwrap().listen(move || {
-            link.send_message(Msg::PageUpdated);
-        });
+        let listener = ctx
+            .link()
+            .add_location_listener(link.callback(move |_| Msg::PageUpdated))
+            .unwrap();
 
         Self {
             page: current_page(ctx),

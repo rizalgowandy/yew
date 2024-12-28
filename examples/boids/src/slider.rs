@@ -1,6 +1,8 @@
 use std::cell::Cell;
+
 use web_sys::HtmlInputElement;
-use yew::{events::InputEvent, html, Callback, Component, Context, Html, Properties, TargetCast};
+use yew::events::InputEvent;
+use yew::{html, Callback, Component, Context, Html, Properties, TargetCast};
 
 thread_local! {
     static SLIDER_ID: Cell<usize> = Cell::default();
@@ -54,12 +56,12 @@ impl Component for Slider {
             step,
         } = *ctx.props();
 
-        let precision = precision.unwrap_or_else(|| if percentage { 1 } else { 0 });
+        let precision = precision.unwrap_or_else(|| usize::from(percentage));
 
         let display_value = if percentage {
             format!("{:.p$}%", 100.0 * value, p = precision)
         } else {
-            format!("{:.p$}", value, p = precision)
+            format!("{value:.precision$}")
         };
 
         let id = format!("slider-{}", self.id);
@@ -77,6 +79,7 @@ impl Component for Slider {
             <div class="slider">
                 <label for={id.clone()} class="slider__label">{ label }</label>
                 <input type="range"
+                    value={value.to_string()}
                     {id}
                     class="slider__input"
                     min={min.to_string()} max={max.to_string()} step={step.to_string()}

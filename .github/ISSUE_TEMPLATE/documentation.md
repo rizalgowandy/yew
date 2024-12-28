@@ -1,6 +1,6 @@
 ---
 name: Documentation
-about: Report an issue relating to this project's documetation.
+about: Report an issue relating to this project's documentation.
 title: ''
 labels: documentation
 assignees: ''
@@ -11,7 +11,7 @@ assignees: ''
 
 This is about:
 - [ ] A typo 
-- [ ] Innaccurate/misleading documentation (e.g. technically incorrect advice)
+- [ ] Inaccurate/misleading documentation (e.g. technically incorrect advice)
 - [ ] Undocumented code
 - [ ] Outdated documentation
 - [ ] Other

@@ -1,9 +1,10 @@
 //! This module contains the implementation yew's virtual nodes' keys.
 
-use crate::html::ImplicitClone;
 use std::fmt::{self, Display, Formatter};
 use std::ops::Deref;
 use std::rc::Rc;
+
+use crate::html::ImplicitClone;
 
 /// Represents the (optional) key of Yew's virtual nodes.
 ///
@@ -67,20 +68,20 @@ key_impl_from_to_string!(i64);
 key_impl_from_to_string!(i128);
 key_impl_from_to_string!(isize);
 
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 #[cfg(test)]
 mod test {
-    use crate::html;
     use std::rc::Rc;
 
-    #[cfg(feature = "wasm_test")]
     use wasm_bindgen_test::{wasm_bindgen_test as test, wasm_bindgen_test_configure};
 
-    #[cfg(feature = "wasm_test")]
+    use crate::html;
+
     wasm_bindgen_test_configure!(run_in_browser);
 
     #[test]
     fn all_key_conversions() {
-        html! {
+        let _ = html! {
             <key="string literal">
                 <img key={"String".to_owned()} />
                 <p key={Rc::<str>::from("rc")}></p>

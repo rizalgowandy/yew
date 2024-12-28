@@ -1,7 +1,9 @@
-use crate::{content, generator::Generated, Route};
 use content::PostPart;
 use yew::prelude::*;
 use yew_router::prelude::*;
+
+use crate::generator::Generated;
+use crate::{content, Route};
 
 #[derive(Clone, Debug, Eq, PartialEq, Properties)]
 pub struct Props {
@@ -21,7 +23,7 @@ impl Component for Post {
         }
     }
 
-    fn changed(&mut self, ctx: &Context<Self>) -> bool {
+    fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool {
         self.post = content::Post::generate_from_seed(ctx.props().seed);
         true
     }

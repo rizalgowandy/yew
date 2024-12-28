@@ -6,10 +6,13 @@ This example shows two input fields which are automatically focused when hovered
 
 ## Concepts
 
-The example uses [Refs](https://yew.rs/concepts/components/refs/) to
+The example uses [Refs](https://yew.rs/docs/concepts/function-components/node-refs) to
 manipulate the underlying DOM element directly.
 
-## Improvements
+## Running
 
-- Use CSS to improve the presentation of the example
-- Expand this to a fully fledged form with input validation etc.
+Run this application with the trunk development server:
+
+```bash
+trunk serve --open
+```

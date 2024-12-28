@@ -1,11 +1,12 @@
-use crate::random;
 use std::rc::Rc;
-use yew::{html, Component, Context, Html, Properties};
 
 use fake::faker::address::raw::*;
 use fake::faker::name::raw::*;
 use fake::locales::*;
 use fake::Fake;
+use yew::{html, Component, Context, Html, Properties};
+
+use crate::random;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PersonInfo {
@@ -22,7 +23,7 @@ impl PersonInfo {
             let city = CityName(EN).fake::<String>();
             let street = StreetName(EN).fake::<String>();
 
-            Rc::from(format!("{} {} St., {}, {}", no, street, city, state).as_str())
+            Rc::from(format!("{no} {street} St., {city}, {state}").as_str())
         };
 
         Self {

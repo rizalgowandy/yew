@@ -1,6 +1,6 @@
-use std::borrow::Cow;
+pub use urlencoding::{decode as decode_for_url, encode as encode_for_url};
 
-use crate::utils::{base_url, strip_slash_suffix};
+use crate::utils::strip_slash_suffix;
 use crate::Routable;
 
 // re-export Router because the macro needs to access it
@@ -8,16 +8,9 @@ pub type Router = route_recognizer::Router<String>;
 
 /// Build a `route_recognizer::Router` from a `Routable` type.
 pub fn build_router<R: Routable>() -> Router {
-    let base = base_url();
     let mut router = Router::new();
     R::routes().iter().for_each(|path| {
-        let route = match base {
-            Some(ref base) => Cow::from(format!("{}{}", base, path)),
-            None => (*path).into(),
-        };
-
-        let stripped_route = strip_slash_suffix(&route);
-
+        let stripped_route = strip_slash_suffix(path);
         router.add(stripped_route, path.to_string());
     });
 

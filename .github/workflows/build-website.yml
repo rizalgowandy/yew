@@ -15,24 +15,38 @@ on:
 
 jobs:
   build:
+    name: Build Website
     runs-on: ubuntu-latest
-    env:
-      PR_INFO_FILE: ".PR_INFO"
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+
       - name: Setup node
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v4
         with:
-          node-version: "14.x"
+          node-version: "18"
+
+      - name: Install dependencies
+        run: |
+          cd website
+          npm ci
+
+      - name: Run prettier
+        run: |
+          cd website
+          npm run fmt
+
+      - name: Check Translations
+        run: |
+          cd website
+          npm run check-translations
 
       - name: Build
         run: |
           cd website
-          npm install
           npm run build
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: website
           path: website/build/
@@ -41,12 +55,13 @@ jobs:
       - if: github.event_name == 'pull_request'
         name: Build pr info
         run: |
-          echo "${{ github.event.number }}" > $PR_INFO_FILE
+          echo "${{ github.event.number }}" > .PR_INFO
 
       - if: github.event_name == 'pull_request'
         name: Upload pr info
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: pr-info
-          path: "${{ env.PR_INFO_FILE }}"
+          include-hidden-files: true
+          path: .PR_INFO
           retention-days: 1

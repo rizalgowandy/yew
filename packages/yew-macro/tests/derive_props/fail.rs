@@ -32,7 +32,7 @@ mod t3 {
     }
 
     fn required_props_should_be_set() {
-        Props::builder().build();
+        ::yew::props!{ Props { } };
     }
 }
 
@@ -40,12 +40,11 @@ mod t4 {
     use super::*;
     #[derive(Clone, Properties, PartialEq)]
     pub struct Props {
-        b: i32,
-        a: i32,
+        value: Option<String>
     }
 
-    fn enforce_ordering() {
-        Props::builder().b(1).a(2).build();
+    fn required_option_should_be_provided() {
+        ::yew::props!{ Props { } };
     }
 }
 

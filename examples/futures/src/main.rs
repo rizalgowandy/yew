@@ -1,7 +1,6 @@
-use std::{
-    error::Error,
-    fmt::{self, Debug, Display, Formatter},
-};
+use std::error::Error;
+use std::fmt::{self, Debug, Display, Formatter};
+
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -44,13 +43,13 @@ pub enum FetchState<T> {
 /// Consult the following for an example of the fetch api by the team behind web_sys:
 /// https://rustwasm.github.io/wasm-bindgen/examples/fetch.html
 async fn fetch_markdown(url: &'static str) -> Result<String, FetchError> {
-    let mut opts = RequestInit::new();
-    opts.method("GET");
-    opts.mode(RequestMode::Cors);
+    let opts = RequestInit::new();
+    opts.set_method("GET");
+    opts.set_mode(RequestMode::Cors);
 
     let request = Request::new_with_str_and_init(url, &opts)?;
 
-    let window = gloo_utils::window();
+    let window = gloo::utils::window();
     let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
     let resp: Response = resp_value.dyn_into().unwrap();
 
@@ -63,11 +62,11 @@ enum Msg {
     GetMarkdown,
     GetError,
 }
-struct Model {
+struct App {
     markdown: FetchState<String>,
 }
 
-impl Component for Model {
+impl Component for App {
     type Message = Msg;
     type Properties = ();
 
@@ -128,5 +127,5 @@ impl Component for Model {
 }
 
 fn main() {
-    yew::start_app::<Model>();
+    yew::Renderer::<App>::new().render();
 }

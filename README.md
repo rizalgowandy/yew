@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://yew.rs/img/logo.png" width="150" />
+  <a href="https://yew.rs/" target="_blank"><img src="https://yew.rs/img/logo.png" width="150" /></a>
 
   <h1>Yew</h1>
 
@@ -11,24 +11,24 @@
     <a href="https://crates.io/crates/yew"><img alt="Crate Info" src="https://img.shields.io/crates/v/yew.svg"/></a>
     <a href="https://docs.rs/yew/"><img alt="API Docs" src="https://img.shields.io/badge/docs.rs-yew-green"/></a>
     <a href="https://discord.gg/VQck8X4"><img alt="Discord Chat" src="https://img.shields.io/discord/701068342760570933"/></a>
-    <a href="https://gitlocalize.com/repo/4999/whole_project?utm_source=badge"> <img src="https://gitlocalize.com/repo/4999/whole_project/badge.svg" /> </a>
-    <a href="https://blog.rust-lang.org/2020/12/31/Rust-1.49.0.html"><img alt="Rustc Version 1.49.0+" src="https://img.shields.io/badge/rustc-1.49%2B-lightgrey.svg"/></a>
+    <a href="https://gitlocalize.com/repo/7052/whole_project?utm_source=badge"> <img src="https://gitlocalize.com/repo/7052/whole_project/badge.svg" /> </a>
+    <a href="https://blog.rust-lang.org/2020/12/31/Rust-1.56.1.html"><img alt="Rustc Version 1.56.1+" src="https://img.shields.io/badge/rustc-1.56%2B-lightgrey.svg"/></a>
   </p>
 
   <h4>
     <a href="https://yew.rs/">Documentation (stable)</a>
     <span> | </span>
-    <a href="https://yew.rs/next/">Documentation (latest)</a>
+    <a href="https://yew.rs/docs/next/">Documentation (latest)</a>
     <span> | </span>
-    <a href="https://github.com/yewstack/yew/tree/v0.18/examples">Examples</a>
+    <a href="https://github.com/yewstack/yew/tree/master/examples">Examples</a>
     <span> | </span>
     <a href="https://github.com/yewstack/yew/blob/master/CHANGELOG.md">Changelog</a>
     <span> | </span>
-    <a href="https://yew.rs/more/roadmap">Roadmap</a>
+    <a href="https://yew.rs/docs/more/roadmap">Roadmap</a>
     <span> | </span>
-    <a href="https://yew.rs/zh-CN">简体中文文档</a>
+    <a href="https://yew.rs/zh-Hans">简体中文文档</a>
     <span> | </span>
-    <a href="https://yew.rs/zh-TW">繁體中文文檔</a>
+    <a href="https://yew.rs/zh-Hant">繁體中文文檔</a>
     <span> | </span>
     <a href="https://yew.rs/ja">ドキュメント</a>
   </h4>
@@ -42,11 +42,11 @@
 * Achieves high performance by minimizing DOM API calls for each page render and by making it easy to offload processing to background web workers.
 * Supports JavaScript interoperability, allowing developers to leverage NPM packages and integrate with existing JavaScript applications.
 
-*Note: Yew is not (yet) production ready but is great for side projects and internal tools.*
+*Note: Yew is not 1.0 yet. Be prepared to do major refactoring due to breaking API changes.*
 
 ## Contributing
 
-Yew is a community effort and we welcome all kinds of contributions, big or small, from developers of all backgrounds. We want the Yew community to be a fun and friendly place, so please review our [Code of Conduct](CODE_OF_CONDUCT.md) to learn what behavior will not be tolerated.
+Yew is a community effort and we welcome all kinds of contributions, big or small, from developers of all backgrounds. We want the Yew community to be a fun and friendly place, so please review our [Code of Conduct](https://github.com/yewstack/yew/blob/master/CODE_OF_CONDUCT.md) to learn what behavior will not be tolerated.
 
 #### 🤠 New to Yew?
 
@@ -62,11 +62,7 @@ Feel free to drop into our [Discord chatroom](https://discord.gg/VQck8X4) or ope
 
 #### 🙂 Ready to dive into the code?
 
-After reviewing the [Contribution Guide](CONTRIBUTING.md), check out the ["Good First Issues"](https://github.com/yewstack/yew/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) (they are eager for attention!). Once you find one that interests you, feel free to assign yourself to an issue and don't hesitate to reach out for guidance, the issues vary in complexity.
-
-#### 🤑 Let's help each other!
-
-Come help us on the [issues that matter that the most](https://github.com/yewstack/yew/labels/%3Adollar%3A%20Funded%20on%20Issuehunt) and receive a small cash reward for your troubles. We use [Issuehunt](https://issuehunt.io/r/yewstack/yew/) to fund issues from our Open Collective funds. If you really care about an issue, you can choose to add funds yourself!
+After reviewing the [Contribution Guide](https://github.com/yewstack/yew/blob/master/CONTRIBUTING.md), check out the ["Good First Issues"](https://github.com/yewstack/yew/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) (they are eager for attention!). Once you find one that interests you, feel free to assign yourself to an issue and don't hesitate to reach out for guidance, the issues vary in complexity.
 
 #### 😱 Found a bug?
 
@@ -74,7 +70,7 @@ Please [report all bugs!](https://github.com/yewstack/yew/issues/new/choose) We 
 
 #### 🤓 Want to help translate?
 
-Translations can be submitted on the [Yew GitLocalize Repo](https://gitlocalize.com/repo/4999). If you are interested in being the official moderator for a language, please reach out on Discord.
+Translations can be submitted on the [Yew GitLocalize Repo](https://gitlocalize.com/repo/7052). If you are interested in being the official moderator for a language, please reach out on Discord.
 
 ## Contributors
 
