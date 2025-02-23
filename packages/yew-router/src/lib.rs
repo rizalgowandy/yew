@@ -4,8 +4,8 @@
 //! # Usage
 //!
 //! ```rust
-//! use yew::prelude::*;
 //! use yew::functional::*;
+//! use yew::prelude::*;
 //! use yew_router::prelude::*;
 //!
 //! #[derive(Debug, Clone, Copy, PartialEq, Routable)]
@@ -21,9 +21,9 @@
 //!
 //! #[function_component(Secure)]
 //! fn secure() -> Html {
-//!     let history = use_history().unwrap();
+//!     let navigator = use_navigator().unwrap();
 //!
-//!     let onclick_callback = Callback::from(move |_| history.push(Route::Home));
+//!     let onclick_callback = Callback::from(move |_| navigator.push(&Route::Home));
 //!     html! {
 //!         <div>
 //!             <h1>{ "Secure" }</h1>
@@ -36,12 +36,12 @@
 //! fn app() -> Html {
 //!     html! {
 //!         <BrowserRouter>
-//!             <Switch<Route> render={Switch::render(switch)} />
+//!             <Switch<Route> render={switch} />
 //!         </BrowserRouter>
 //!     }
 //! }
 //!
-//! fn switch(routes: &Route) -> Html {
+//! fn switch(routes: Route) -> Html {
 //!     match routes {
 //!         Route::Home => html! { <h1>{ "Home" }</h1> },
 //!         Route::Secure => html! {
@@ -54,13 +54,14 @@
 //!
 //! # Internals
 //!
-//! The router registers itself as a context provider and makes session history and location information
+//! The router registers itself as a context provider and makes location information and navigator
 //! available via [`hooks`] or [`RouterScopeExt`](scope_ext::RouterScopeExt).
 //!
 //! # State
 //!
-//! The [`history`] API has a way access / store state associated with session history. Please
-//! consule [`history.state()`](history::History::state) for detailed usage.
+//! The [`Location`](gloo::history::Location) API has a way to access / store state associated with
+//! session history. Please consult [`location.state()`](crate::history::Location::state) for
+//! detailed usage.
 
 extern crate self as yew_router;
 
@@ -68,8 +69,8 @@ extern crate self as yew_router;
 #[path = "macro_helpers.rs"]
 pub mod __macro;
 pub mod components;
-pub mod history;
 pub mod hooks;
+pub mod navigator;
 mod routable;
 pub mod router;
 pub mod scope_ext;
@@ -77,8 +78,17 @@ pub mod switch;
 pub mod utils;
 
 pub use routable::{AnyRoute, Routable};
-pub use router::{BrowserRouter, Router};
-pub use switch::{RenderFn, Switch};
+pub use router::{BrowserRouter, HashRouter, Router};
+pub use switch::Switch;
+
+pub mod history {
+    //! A module that provides universal session history and location information.
+
+    pub use gloo::history::{
+        AnyHistory, BrowserHistory, HashHistory, History, HistoryError, HistoryResult, Location,
+        MemoryHistory,
+    };
+}
 
 pub mod prelude {
     //! Prelude module to be imported when working with `yew-router`.
@@ -86,12 +96,11 @@ pub mod prelude {
     //! This module re-exports the frequently used types from the crate.
 
     pub use crate::components::{Link, Redirect};
-    pub use crate::history::*;
+    pub use crate::history::Location;
     pub use crate::hooks::*;
-    pub use crate::scope_ext::RouterScopeExt;
+    pub use crate::navigator::{NavigationError, NavigationResult, Navigator};
+    pub use crate::scope_ext::{LocationHandle, NavigatorHandle, RouterScopeExt};
     #[doc(no_inline)]
     pub use crate::Routable;
-    pub use crate::{BrowserRouter, Router};
-
-    pub use crate::Switch;
+    pub use crate::{BrowserRouter, HashRouter, Router, Switch};
 }

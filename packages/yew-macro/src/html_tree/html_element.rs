@@ -1,14 +1,54 @@
-use super::{HtmlChildrenTree, HtmlDashedName, TagTokens};
-use crate::props::{ClassesForm, ElementProps, Prop};
-use crate::stringify::{Stringify, Value};
-use crate::{non_capitalized_ascii, Peek, PeekValue};
-use boolinator::Boolinator;
-use proc_macro2::{Delimiter, TokenStream};
+use proc_macro2::{Delimiter, Group, Span, TokenStream};
+use proc_macro_error::emit_warning;
 use quote::{quote, quote_spanned, ToTokens};
 use syn::buffer::Cursor;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
-use syn::{Block, Expr, Ident, Lit, LitStr, Token};
+use syn::{Expr, Ident, Lit, LitStr, Token};
+
+use super::{HtmlChildrenTree, HtmlDashedName, TagTokens};
+use crate::props::{ElementProps, Prop, PropDirective};
+use crate::stringify::{Stringify, Value};
+use crate::{is_ide_completion, non_capitalized_ascii, Peek, PeekValue};
+
+fn is_normalised_element_name(name: &str) -> bool {
+    match name {
+        "animateMotion"
+        | "animateTransform"
+        | "clipPath"
+        | "feBlend"
+        | "feColorMatrix"
+        | "feComponentTransfer"
+        | "feComposite"
+        | "feConvolveMatrix"
+        | "feDiffuseLighting"
+        | "feDisplacementMap"
+        | "feDistantLight"
+        | "feDropShadow"
+        | "feFlood"
+        | "feFuncA"
+        | "feFuncB"
+        | "feFuncG"
+        | "feFuncR"
+        | "feGaussianBlur"
+        | "feImage"
+        | "feMerge"
+        | "feMergeNode"
+        | "feMorphology"
+        | "feOffset"
+        | "fePointLight"
+        | "feSpecularLighting"
+        | "feSpotLight"
+        | "feTile"
+        | "feTurbulence"
+        | "foreignObject"
+        | "glyphRef"
+        | "linearGradient"
+        | "radialGradient"
+        | "textPath" => true,
+        _ => !name.chars().any(|c| c.is_ascii_uppercase()),
+    }
+}
 
 pub struct HtmlElement {
     pub name: TagName,
@@ -52,10 +92,27 @@ impl Parse for HtmlElement {
             //
             // For dynamic tags this is done at runtime!
             match name.to_ascii_lowercase_string().as_str() {
+                "textarea" => {
+                    return Err(syn::Error::new_spanned(
+                        open.to_spanned(),
+                        "the tag `<textarea>` is a void element and cannot have children (hint: \
+                         to provide value to it, rewrite it as `<textarea value={x} />`. If you \
+                         wish to set the default value, rewrite it as `<textarea defaultvalue={x} \
+                         />`)",
+                    ))
+                }
+
                 "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input" | "link"
                 | "meta" | "param" | "source" | "track" | "wbr" => {
-                    return Err(syn::Error::new_spanned(open.to_spanned(), format!("the tag `<{}>` is a void element and cannot have children (hint: rewrite this as `<{0}/>`)", name)));
+                    return Err(syn::Error::new_spanned(
+                        open.to_spanned(),
+                        format!(
+                            "the tag `<{name}>` is a void element and cannot have children (hint: \
+                             rewrite this as `<{name} />`)",
+                        ),
+                    ))
                 }
+
                 _ => {}
             }
         }
@@ -64,6 +121,9 @@ impl Parse for HtmlElement {
         let mut children = HtmlChildrenTree::new();
         loop {
             if input.is_empty() {
+                if is_ide_completion() {
+                    break;
+                }
                 return Err(syn::Error::new_spanned(
                     open.to_spanned(),
                     "this opening tag has no corresponding closing tag",
@@ -78,7 +138,9 @@ impl Parse for HtmlElement {
             children.parse_child(input)?;
         }
 
-        input.parse::<HtmlElementClose>()?;
+        if !input.is_empty() || !is_ide_completion() {
+            input.parse::<HtmlElementClose>()?;
+        }
 
         Ok(Self {
             name: open.name,
@@ -103,112 +165,97 @@ impl ToTokens for HtmlElement {
             booleans,
             value,
             checked,
-            node_ref,
-            key,
             listeners,
+            special,
+            defaultvalue,
         } = &props;
 
         // attributes with special treatment
 
-        let node_ref = node_ref
-            .as_ref()
-            .map(|attr| {
-                let value = &attr.value;
-                quote_spanned! {value.span()=>
-                    ::yew::html::IntoPropValue::<::yew::html::NodeRef>
-                    ::into_prop_value(#value)
-                }
-            })
-            .unwrap_or(quote! { ::std::default::Default::default() });
-        let key = key
-            .as_ref()
-            .map(|attr| {
-                let value = attr.value.optimize_literals();
-                quote_spanned! {value.span()=>
-                    ::std::option::Option::Some(
-                        ::std::convert::Into::<::yew::virtual_dom::Key>::into(#value)
-                    )
-                }
-            })
-            .unwrap_or(quote! { ::std::option::Option::None });
-        let value = value
-            .as_ref()
-            .map(wrap_attr_prop)
-            .unwrap_or(quote! { ::std::option::Option::None });
-        let checked = checked
-            .as_ref()
-            .map(|attr| {
-                let value = &attr.value;
-                quote_spanned! {value.span()=> #value}
-            })
-            .unwrap_or(quote! { false });
+        let node_ref = special.wrap_node_ref_attr();
+        let key = special.wrap_key_attr();
+        let value = || {
+            value
+                .as_ref()
+                .map(|prop| wrap_attr_value(prop.value.optimize_literals()))
+                .unwrap_or(quote! { ::std::option::Option::None })
+        };
+        let checked = || {
+            checked
+                .as_ref()
+                .map(|attr| {
+                    let value = &attr.value;
+                    quote! { ::std::option::Option::Some( #value ) }
+                })
+                .unwrap_or(quote! { ::std::option::Option::None })
+        };
+        let defaultvalue = || {
+            defaultvalue
+                .as_ref()
+                .map(|prop| wrap_attr_value(prop.value.optimize_literals()))
+                .unwrap_or(quote! { ::std::option::Option::None })
+        };
 
         // other attributes
 
         let attributes = {
-            let normal_attrs = attributes.iter().map(|Prop { label, value, .. }| {
-                (label.to_lit_str(), value.optimize_literals_tagged())
-            });
-            let boolean_attrs = booleans.iter().filter_map(|Prop { label, value, .. }| {
-                let key = label.to_lit_str();
-                Some((
-                    key.clone(),
-                    match value {
-                        Expr::Lit(e) => match &e.lit {
-                            Lit::Bool(b) => Value::Static(if b.value {
-                                quote! { #key }
-                            } else {
-                                return None;
-                            }),
-                            _ => Value::Dynamic(quote_spanned! {value.span()=> {
-                                ::yew::utils::__ensure_type::<::std::primitive::bool>(#value);
-                                #key
-                            }}),
-                        },
-                        expr => Value::Dynamic(quote_spanned! {expr.span()=>
-                            if #expr {
-                                ::std::option::Option::Some(
-                                    ::yew::virtual_dom::AttrValue::Static(#key)
-                                )
-                            } else {
-                                ::std::option::Option::None
-                            }
-                        }),
-                    },
-                ))
-            });
-            let class_attr = classes.as_ref().and_then(|classes| match classes {
-                ClassesForm::Tuple(classes) => {
-                    let span = classes.span();
-                    let classes: Vec<_> = classes.elems.iter().collect();
-                    let n = classes.len();
-
-                    let deprecation_warning = quote_spanned! {span=>
-                        #[deprecated(
-                            note = "the use of `(...)` with the attribute `class` is deprecated and will be removed in version 0.19. Use the `classes!` macro instead."
-                        )]
-                        fn deprecated_use_of_class() {}
-
-                        if false {
-                            deprecated_use_of_class();
-                        };
-                    };
-
+            let normal_attrs = attributes.iter().map(
+                |Prop {
+                     label,
+                     value,
+                     directive,
+                     ..
+                 }| {
+                    (
+                        label.to_lit_str(),
+                        value.optimize_literals_tagged(),
+                        *directive,
+                    )
+                },
+            );
+            let boolean_attrs = booleans.iter().filter_map(
+                |Prop {
+                     label,
+                     value,
+                     directive,
+                     ..
+                 }| {
+                    let key = label.to_lit_str();
                     Some((
-                        LitStr::new("class", span),
-                        Value::Dynamic(quote! {
-                            {
-                                #deprecation_warning
-
-                                let mut __yew_classes = ::yew::html::Classes::with_capacity(#n);
-                                #(__yew_classes.push(#classes);)*
-                                __yew_classes
-                            }
-                        }),
+                        key.clone(),
+                        match value {
+                            Expr::Lit(e) => match &e.lit {
+                                Lit::Bool(b) => Value::Static(if b.value {
+                                    quote! { #key }
+                                } else {
+                                    return None;
+                                }),
+                                _ => Value::Dynamic(quote_spanned! {value.span()=> {
+                                    ::yew::utils::__ensure_type::<::std::primitive::bool>(#value);
+                                    #key
+                                }}),
+                            },
+                            expr => Value::Dynamic(
+                                quote_spanned! {expr.span().resolved_at(Span::call_site())=>
+                                    if #expr {
+                                        ::std::option::Option::Some(
+                                            ::yew::virtual_dom::AttrValue::Static(#key)
+                                        )
+                                    } else {
+                                        ::std::option::Option::None
+                                    }
+                                },
+                            ),
+                        },
+                        *directive,
                     ))
-                }
-                ClassesForm::Single(classes) => {
-                    match classes.try_into_lit() {
+                },
+            );
+
+            let class_attr =
+                classes
+                    .as_ref()
+                    .and_then(|classes| match classes.value.try_into_lit() {
                         Some(lit) => {
                             if lit.value().is_empty() {
                                 None
@@ -216,30 +263,51 @@ impl ToTokens for HtmlElement {
                                 Some((
                                     LitStr::new("class", lit.span()),
                                     Value::Static(quote! { #lit }),
+                                    None,
                                 ))
                             }
                         }
                         None => {
+                            let expr = &classes.value;
                             Some((
-                                LitStr::new("class", classes.span()),
+                                LitStr::new("class", classes.label.span()),
                                 Value::Dynamic(quote! {
-                                    ::std::convert::Into::<::yew::html::Classes>::into(#classes)
+                                    ::std::convert::Into::<::yew::html::Classes>::into(#expr)
                                 }),
+                                None,
                             ))
                         }
-                    }
-                }
-            });
+                    });
 
             /// Try to turn attribute list into a `::yew::virtual_dom::Attributes::Static`
-            fn try_into_static(src: &[(LitStr, Value)]) -> Option<TokenStream> {
+            fn try_into_static(
+                src: &[(LitStr, Value, Option<PropDirective>)],
+            ) -> Option<TokenStream> {
+                if src
+                    .iter()
+                    .any(|(_, _, d)| matches!(d, Some(PropDirective::ApplyAsProperty(_))))
+                {
+                    // don't try to make a static attribute list if there are any properties to
+                    // assign
+                    return None;
+                }
                 let mut kv = Vec::with_capacity(src.len());
-                for (k, v) in src.iter() {
+                for (k, v, directive) in src.iter() {
                     let v = match v {
                         Value::Static(v) => quote! { #v },
                         Value::Dynamic(_) => return None,
                     };
-                    kv.push(quote! { [ #k, #v ] });
+                    let v = match directive {
+                        Some(PropDirective::ApplyAsProperty(token)) => {
+                            quote_spanned!(token.span()=> ::yew::virtual_dom::AttributeOrProperty::Property(
+                                ::std::convert::Into::into(#v)
+                            ))
+                        }
+                        None => quote!(::yew::virtual_dom::AttributeOrProperty::Static(
+                            #v
+                        )),
+                    };
+                    kv.push(quote! { ( #k, #v) });
                 }
 
                 Some(quote! { ::yew::virtual_dom::Attributes::Static(&[#(#kv),*]) })
@@ -248,16 +316,26 @@ impl ToTokens for HtmlElement {
             let attrs = normal_attrs
                 .chain(boolean_attrs)
                 .chain(class_attr)
-                .collect::<Vec<(LitStr, Value)>>();
+                .collect::<Vec<(LitStr, Value, Option<PropDirective>)>>();
             try_into_static(&attrs).unwrap_or_else(|| {
-                let keys = attrs.iter().map(|(k, _)| quote! { #k });
-                let values = attrs.iter().map(|(_, v)| {
-                    quote_spanned! {v.span()=>
-                        ::yew::html::IntoPropValue::<
-                            ::std::option::Option::<::yew::virtual_dom::AttrValue>
-                        >
-                        ::into_prop_value(#v)
-                    }
+                let keys = attrs.iter().map(|(k, ..)| quote! { #k });
+                let values = attrs.iter().map(|(_, v, directive)| {
+                    let value = match directive {
+                        Some(PropDirective::ApplyAsProperty(token)) => {
+                            quote_spanned!(token.span()=> ::std::option::Option::Some(
+                                ::yew::virtual_dom::AttributeOrProperty::Property(
+                                    ::std::convert::Into::into(#v)
+                                ))
+                            )
+                        }
+                        None => {
+                            let value = wrap_attr_value(v);
+                            quote! {
+                                ::std::option::Option::map(#value, ::yew::virtual_dom::AttributeOrProperty::Attribute)
+                            }
+                        },
+                    };
+                    quote! { #value }
                 });
                 quote! {
                     ::yew::virtual_dom::Attributes::Dynamic{
@@ -287,21 +365,26 @@ impl ToTokens for HtmlElement {
 
         // TODO: if none of the children have possibly None expressions or literals as keys, we can
         // compute `VList.fully_keyed` at compile time.
-        let child_list = quote! {
-            ::yew::virtual_dom::VList::with_children(
-                #children,
-                ::std::option::Option::None,
-            )
-        };
+        let children = children.to_vnode_tokens();
 
         tokens.extend(match &name {
-            TagName::Lit(name) => {
-                let name_span = name.span();
-                let name = name.to_ascii_lowercase_string();
-                match &*name {
+            TagName::Lit(dashedname) => {
+                let name_span = dashedname.span();
+                let name = dashedname.to_ascii_lowercase_string();
+                if !is_normalised_element_name(&dashedname.to_string()) {
+                    emit_warning!(
+                        name_span.clone(),
+                        format!(
+                            "The tag '{dashedname}' is not matching its normalized form '{name}'. If you want \
+                             to keep this form, change this to a dynamic tag `@{{\"{dashedname}\"}}`."
+                        )
+                    )
+                }
+                let node = match &*name {
                     "input" => {
-                        quote_spanned! {name_span=>
-                            #[allow(clippy::redundant_clone, unused_braces)]
+                        let value = value();
+                        let checked = checked();
+                        quote! {
                             ::std::convert::Into::<::yew::virtual_dom::VNode>::into(
                                 ::yew::virtual_dom::VTag::__new_input(
                                     #value,
@@ -315,11 +398,13 @@ impl ToTokens for HtmlElement {
                         }
                     }
                     "textarea" => {
-                        quote_spanned! {name_span=>
-                            #[allow(clippy::redundant_clone, unused_braces)]
+                        let value = value();
+                        let defaultvalue = defaultvalue();
+                        quote! {
                             ::std::convert::Into::<::yew::virtual_dom::VNode>::into(
                                 ::yew::virtual_dom::VTag::__new_textarea(
                                     #value,
+                                    #defaultvalue,
                                     #node_ref,
                                     #key,
                                     #attributes,
@@ -329,26 +414,37 @@ impl ToTokens for HtmlElement {
                         }
                     }
                     _ => {
-                        quote_spanned! {name_span=>
-                            #[allow(clippy::redundant_clone, unused_braces)]
+                        quote! {
                             ::std::convert::Into::<::yew::virtual_dom::VNode>::into(
                                 ::yew::virtual_dom::VTag::__new_other(
-                                    ::std::borrow::Cow::<'static, ::std::primitive::str>::Borrowed(#name),
+                                    ::yew::virtual_dom::AttrValue::Static(#name),
                                     #node_ref,
                                     #key,
                                     #attributes,
                                     #listeners,
-                                    #child_list,
+                                    #children,
                                 ),
                             )
                         }
+                    }
+                };
+                // the return value can be inlined without the braces when this is stable:
+                // https://github.com/rust-lang/rust/issues/15701
+                quote_spanned!{
+                    name_span =>
+                    {
+                        #[allow(clippy::redundant_clone, unused_braces)]
+                        let node = #node;
+                        node
                     }
                 }
             }
             TagName::Expr(name) => {
                 let vtag = Ident::new("__yew_vtag", name.span());
-                let expr = &name.expr;
+                let expr = name.expr.as_ref().map(Group::stream);
                 let vtag_name = Ident::new("__yew_vtag_name", expr.span());
+
+                let void_children = Ident::new("__yew_void_children", Span::mixed_site());
 
                 // handle special attribute value
                 let handle_value_attr = props.value.as_ref().map(|prop| {
@@ -358,39 +454,49 @@ impl ToTokens for HtmlElement {
                     }}
                 });
 
+                #[cfg(nightly_yew)]
+                let invalid_void_tag_msg_start = {
+                    let span = vtag.span().unwrap();
+                    let source_file = span.source_file().path();
+                    let source_file = source_file.display();
+                    let start = span.start();
+                    format!("[{}:{}:{}] ", source_file, start.line(), start.column())
+                };
+
+                #[cfg(not(nightly_yew))]
+                let invalid_void_tag_msg_start = "";
+
+                let value = value();
+                let checked = checked();
+                let defaultvalue = defaultvalue();
                 // this way we get a nice error message (with the correct span) when the expression
                 // doesn't return a valid value
                 quote_spanned! {expr.span()=> {
-                    #[allow(unused_braces)]
-                    // e.g. html!{<@{"div"}/>} will set `#expr` to `{"div"}`
-                    // (note the extra braces). Hence the need for the `allow`.
-                    // Anyways to remove the braces?
                     let mut #vtag_name = ::std::convert::Into::<
-                        ::std::borrow::Cow::<'static, ::std::primitive::str>
+                        ::yew::virtual_dom::AttrValue
                     >::into(#expr);
-                    if !#vtag_name.is_ascii() {
-                        ::std::panic!(
-                            "a dynamic tag returned a tag name containing non ASCII characters: `{}`",
-                            #vtag_name,
-                        );
-                    }
-                    // convert to lowercase because the runtime checks rely on it.
-                    #vtag_name.to_mut().make_ascii_lowercase();
+                    ::std::debug_assert!(
+                        #vtag_name.is_ascii(),
+                        "a dynamic tag returned a tag name containing non ASCII characters: `{}`",
+                        #vtag_name,
+                    );
 
                     #[allow(clippy::redundant_clone, unused_braces, clippy::let_and_return)]
-                    let mut #vtag = match ::std::convert::AsRef::<::std::primitive::str>::as_ref(&#vtag_name) {
-                        "input" => {
-                            ::yew::virtual_dom::VTag::__new_textarea(
+                    let mut #vtag = match () {
+                        _ if "input".eq_ignore_ascii_case(::std::convert::AsRef::<::std::primitive::str>::as_ref(&#vtag_name)) => {
+                            ::yew::virtual_dom::VTag::__new_input(
                                 #value,
+                                #checked,
                                 #node_ref,
                                 #key,
                                 #attributes,
                                 #listeners,
                             )
                         }
-                        "textarea" => {
+                        _ if "textarea".eq_ignore_ascii_case(::std::convert::AsRef::<::std::primitive::str>::as_ref(&#vtag_name)) => {
                             ::yew::virtual_dom::VTag::__new_textarea(
                                 #value,
+                                #defaultvalue,
                                 #node_ref,
                                 #key,
                                 #attributes,
@@ -404,7 +510,7 @@ impl ToTokens for HtmlElement {
                                 #key,
                                 #attributes,
                                 #listeners,
-                                #child_list,
+                                #children,
                             );
 
                             #handle_value_attr
@@ -416,23 +522,20 @@ impl ToTokens for HtmlElement {
                     // These are the runtime-checks exclusive to dynamic tags.
                     // For literal tags this is already done at compile-time.
                     //
-                    // When Span::source_file Span::start get stabilised or yew-macro introduces a
-                    // nightly feature flag we should expand the panic message to contain the exact
-                    // location of the dynamic tag.
-                    //
                     // check void element
-                    if !#vtag.children().is_empty() {
-                        match #vtag.tag() {
-                            "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input"
-                                | "link" | "meta" | "param" | "source" | "track" | "wbr"
-                            => {
-                                ::std::panic!(
-                                    "a dynamic tag tried to create a `<{0}>` tag with children. `<{0}>` is a void element which can't have any children.",
-                                    #vtag.tag(),
-                                );
-                            }
-                            _ => {}
-                        }
+                    if ::yew::virtual_dom::VTag::children(&#vtag).is_some() &&
+                       !::std::matches!(
+                        ::yew::virtual_dom::VTag::children(&#vtag),
+                        ::std::option::Option::Some(::yew::virtual_dom::VNode::VList(ref #void_children)) if ::std::vec::Vec::is_empty(#void_children)
+                    ) {
+                        ::std::debug_assert!(
+                            !::std::matches!(#vtag.tag().to_ascii_lowercase().as_str(),
+                                "area" | "base" | "br" | "col" | "embed" | "hr" | "img" | "input"
+                                    | "link" | "meta" | "param" | "source" | "track" | "wbr" | "textarea"
+                            ),
+                            concat!(#invalid_void_tag_msg_start, "a dynamic tag tried to create a `<{0}>` tag with children. `<{0}>` is a void element which can't have any children."),
+                            #vtag.tag(),
+                        );
                     }
 
                     ::std::convert::Into::<::yew::virtual_dom::VNode>::into(#vtag)
@@ -442,8 +545,7 @@ impl ToTokens for HtmlElement {
     }
 }
 
-fn wrap_attr_prop(prop: &Prop) -> TokenStream {
-    let value = prop.value.optimize_literals();
+fn wrap_attr_value<T: ToTokens>(value: T) -> TokenStream {
     quote_spanned! {value.span()=>
         ::yew::html::IntoPropValue::<
             ::std::option::Option<
@@ -456,13 +558,15 @@ fn wrap_attr_prop(prop: &Prop) -> TokenStream {
 
 pub struct DynamicName {
     at: Token![@],
-    expr: Option<Block>,
+    expr: Option<Group>,
 }
 
 impl Peek<'_, ()> for DynamicName {
     fn peek(cursor: Cursor) -> Option<((), Cursor)> {
         let (punct, cursor) = cursor.punct()?;
-        (punct.as_char() == '@').as_option()?;
+        if punct.as_char() != '@' {
+            return None;
+        }
 
         // move cursor past block if there is one
         let cursor = cursor
@@ -478,12 +582,7 @@ impl Parse for DynamicName {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let at = input.parse()?;
         // the expression block is optional, closing tags don't have it.
-        let expr = if input.cursor().group(Delimiter::Brace).is_some() {
-            Some(input.parse()?)
-        } else {
-            None
-        };
-
+        let expr = input.parse().ok();
         Ok(Self { at, expr })
     }
 }
@@ -491,7 +590,7 @@ impl Parse for DynamicName {
 impl ToTokens for DynamicName {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let Self { at, expr } = self;
-        tokens.extend(quote! {#at#expr});
+        tokens.extend(quote! {#at #expr});
     }
 }
 
@@ -562,7 +661,9 @@ impl HtmlElementOpen {
 impl PeekValue<TagKey> for HtmlElementOpen {
     fn peek(cursor: Cursor) -> Option<TagKey> {
         let (punct, cursor) = cursor.punct()?;
-        (punct.as_char() == '<').as_option()?;
+        if punct.as_char() != '<' {
+            return None;
+        }
 
         let (tag_key, cursor) = TagName::peek(cursor)?;
         if let TagKey::Lit(name) = &tag_key {
@@ -570,9 +671,11 @@ impl PeekValue<TagKey> for HtmlElementOpen {
             if name.to_string() == "key" {
                 let (punct, _) = cursor.punct()?;
                 // ... unless it isn't followed by a '='. `<key></key>` is a valid element!
-                (punct.as_char() != '=').as_option()?;
-            } else {
-                non_capitalized_ascii(&name.to_string()).as_option()?;
+                if punct.as_char() == '=' {
+                    return None;
+                }
+            } else if !non_capitalized_ascii(&name.to_string()) {
+                return None;
             }
         }
 
@@ -594,6 +697,9 @@ impl Parse for HtmlElementOpen {
                         "input" | "textarea" => {}
                         _ => {
                             if let Some(attr) = props.value.take() {
+                                props.attributes.push(attr);
+                            }
+                            if let Some(attr) = props.checked.take() {
                                 props.attributes.push(attr);
                             }
                         }
@@ -627,20 +733,22 @@ impl HtmlElementClose {
 impl PeekValue<TagKey> for HtmlElementClose {
     fn peek(cursor: Cursor) -> Option<TagKey> {
         let (punct, cursor) = cursor.punct()?;
-        (punct.as_char() == '<').as_option()?;
+        if punct.as_char() != '<' {
+            return None;
+        }
 
         let (punct, cursor) = cursor.punct()?;
-        (punct.as_char() == '/').as_option()?;
+        if punct.as_char() != '/' {
+            return None;
+        }
 
         let (tag_key, cursor) = TagName::peek(cursor)?;
-        if let TagKey::Lit(name) = &tag_key {
-            non_capitalized_ascii(&name.to_string()).as_option()?;
+        if matches!(&tag_key, TagKey::Lit(name) if !non_capitalized_ascii(&name.to_string())) {
+            return None;
         }
 
         let (punct, _) = cursor.punct()?;
-        (punct.as_char() == '>').as_option()?;
-
-        Some(tag_key)
+        (punct.as_char() == '>').then_some(tag_key)
     }
 }
 
@@ -652,9 +760,10 @@ impl Parse for HtmlElementClose {
             if let TagName::Expr(name) = &name {
                 if let Some(expr) = &name.expr {
                     return Err(syn::Error::new_spanned(
-                    expr,
-                    "dynamic closing tags must not have a body (hint: replace it with just `</@>`)",
-                ));
+                        expr,
+                        "dynamic closing tags must not have a body (hint: replace it with just \
+                         `</@>`)",
+                    ));
                 }
             }
 

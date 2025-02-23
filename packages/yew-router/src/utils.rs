@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+
 use wasm_bindgen::JsCast;
 
 pub(crate) fn strip_slash_suffix(path: &str) -> &str {
@@ -7,11 +8,11 @@ pub(crate) fn strip_slash_suffix(path: &str) -> &str {
 
 static BASE_URL_LOADED: std::sync::Once = std::sync::Once::new();
 thread_local! {
-    static BASE_URL: RefCell<Option<String>> = RefCell::new(None);
+    static BASE_URL: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-// This exists so we can cache the base url. It costs us a `to_string` call instead of a DOM API call.
-// Considering base urls are generally short, it *should* be less expensive.
+// This exists so we can cache the base url. It costs us a `to_string` call instead of a DOM API
+// call. Considering base urls are generally short, it *should* be less expensive.
 pub fn base_url() -> Option<String> {
     BASE_URL_LOADED.call_once(|| {
         BASE_URL.with(|val| {
@@ -22,7 +23,7 @@ pub fn base_url() -> Option<String> {
 }
 
 pub fn fetch_base_url() -> Option<String> {
-    match gloo_utils::document().query_selector("base[href]") {
+    match gloo::utils::document().query_selector("base[href]") {
         Ok(Some(base)) => {
             let base = base.unchecked_into::<web_sys::HtmlBaseElement>().href();
 
@@ -41,9 +42,38 @@ pub fn fetch_base_url() -> Option<String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+pub fn compose_path(pathname: &str, query: &str) -> Option<String> {
+    gloo::utils::window()
+        .location()
+        .href()
+        .ok()
+        .and_then(|base| web_sys::Url::new_with_base(pathname, &base).ok())
+        .map(|url| {
+            url.set_search(query);
+            format!("{}{}", url.pathname(), url.search())
+        })
+}
+
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+pub fn compose_path(pathname: &str, query: &str) -> Option<String> {
+    let query = query.trim();
+
+    if !query.is_empty() {
+        Some(format!("{pathname}?{query}"))
+    } else {
+        Some(pathname.to_owned())
+    }
+}
+
+// TODO: remove the cfg after wasm-bindgen-test stops emitting the function unconditionally
+#[cfg(all(
+    test,
+    target_arch = "wasm32",
+    any(target_os = "unknown", target_os = "none")
+))]
 mod tests {
-    use gloo_utils::document;
+    use gloo::utils::document;
     use wasm_bindgen_test::wasm_bindgen_test as test;
     use yew_router::prelude::*;
     use yew_router::utils::*;
@@ -77,5 +107,18 @@ mod tests {
             .unwrap()
             .set_inner_html(r#"<base href="/base">"#);
         assert_eq!(fetch_base_url(), Some("/base".to_string()));
+    }
+
+    #[test]
+    fn test_compose_path() {
+        assert_eq!(compose_path("/home", ""), Some("/home".to_string()));
+        assert_eq!(
+            compose_path("/path/to", "foo=bar"),
+            Some("/path/to?foo=bar".to_string())
+        );
+        assert_eq!(
+            compose_path("/events", "from=2019&to=2021"),
+            Some("/events?from=2019&to=2021".to_string())
+        );
     }
 }

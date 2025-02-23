@@ -1,9 +1,12 @@
+use std::fmt::Write;
+use std::iter;
+
+use rand::Rng;
+use yew::{html, Html};
+
 use crate::math::{self, Mean, Vector2D, WeightedMean};
 use crate::settings::Settings;
 use crate::simulation::SIZE;
-use rand::Rng;
-use std::iter;
-use yew::{html, Html};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Boid {
@@ -15,18 +18,18 @@ pub struct Boid {
 
 impl Boid {
     pub fn new_random(settings: &Settings) -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let max_radius = settings.min_distance / 2.0;
         let min_radius = max_radius / 6.0;
         // by using the third power large boids become rarer
-        let radius = min_radius + rng.gen::<f64>().powi(3) * (max_radius - min_radius);
+        let radius = min_radius + rng.random::<f64>().powi(3) * (max_radius - min_radius);
 
         Self {
-            position: Vector2D::new(rng.gen::<f64>() * SIZE.x, rng.gen::<f64>() * SIZE.y),
-            velocity: Vector2D::from_polar(rng.gen::<f64>() * math::TAU, settings.max_speed),
+            position: Vector2D::new(rng.random::<f64>() * SIZE.x, rng.random::<f64>() * SIZE.y),
+            velocity: Vector2D::from_polar(rng.random::<f64>() * math::TAU, settings.max_speed),
             radius,
-            hue: rng.gen::<f64>() * math::TAU,
+            hue: rng.random::<f64>() * math::TAU,
         }
     }
 
@@ -127,7 +130,9 @@ impl Boid {
         let mut points = String::new();
         for offset in iter_shape_points(self.radius, self.velocity.angle()) {
             let Vector2D { x, y } = self.position + offset;
-            points.push_str(&format!("{:.2},{:.2} ", x, y));
+
+            // Write to string will never fail.
+            let _ = write!(points, "{x:.2},{y:.2} ");
         }
 
         html! { <polygon {points} fill={color} /> }

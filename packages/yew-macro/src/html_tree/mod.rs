@@ -1,12 +1,12 @@
-use crate::PeekValue;
 use proc_macro2::{Delimiter, Ident, Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens};
 use syn::buffer::Cursor;
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
-use syn::Token;
-use syn::{braced, token};
+use syn::{braced, token, Token};
+
+use crate::{is_ide_completion, PeekValue};
 
 mod html_block;
 mod html_component;
@@ -28,6 +28,8 @@ use html_iterable::HtmlIterable;
 use html_list::HtmlList;
 use html_node::HtmlNode;
 use tag::TagTokens;
+
+use self::html_block::BlockContent;
 
 pub enum HtmlType {
     Block,
@@ -65,9 +67,9 @@ impl Parse for HtmlTree {
 
 impl HtmlTree {
     /// Determine the [`HtmlType`] before actually parsing it.
-    /// Even though this method accepts a [`ParseStream`], it is forked and the original stream is not modified.
-    /// Once a certain `HtmlType` can be deduced for certain, the function eagerly returns with the appropriate type.
-    /// If invalid html tag, returns `None`.
+    /// Even though this method accepts a [`ParseStream`], it is forked and the original stream is
+    /// not modified. Once a certain `HtmlType` can be deduced for certain, the function eagerly
+    /// returns with the appropriate type. If invalid html tag, returns `None`.
     fn peek_html_type(input: ParseStream) -> Option<HtmlType> {
         let input = input.fork(); // do not modify original ParseStream
 
@@ -101,6 +103,7 @@ impl HtmlTree {
                     Some(HtmlType::List)
                 } else if ident_str.chars().next().unwrap().is_ascii_uppercase()
                     || input.peek(Token![::])
+                    || is_ide_completion() && ident_str.chars().any(|c| c.is_ascii_uppercase())
                 {
                     Some(HtmlType::Component)
                 } else {
@@ -120,7 +123,7 @@ impl ToTokens for HtmlTree {
         lint::lint_all(self);
         match self {
             HtmlTree::Empty => tokens.extend(quote! {
-                ::yew::virtual_dom::VNode::VList(::yew::virtual_dom::VList::new())
+                <::yew::virtual_dom::VNode as ::std::default::Default>::default()
             }),
             HtmlTree::Component(comp) => comp.to_tokens(tokens),
             HtmlTree::Element(tag) => tag.to_tokens(tokens),
@@ -151,7 +154,8 @@ impl Parse for HtmlRoot {
             let stream: TokenStream = input.parse()?;
             Err(syn::Error::new_spanned(
                 stream,
-                "only one root html element is allowed (hint: you can wrap multiple html elements in a fragment `<></>`)",
+                "only one root html element is allowed (hint: you can wrap multiple html elements \
+                 in a fragment `<></>`)",
             ))
         } else {
             Ok(html_root)
@@ -180,18 +184,21 @@ impl Parse for HtmlRootVNode {
 impl ToTokens for HtmlRootVNode {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let new_tokens = self.0.to_token_stream();
-        tokens.extend(quote! {{
-            #[allow(clippy::useless_conversion)]
-            <::yew::virtual_dom::VNode as ::std::convert::From<_>>::from(#new_tokens)
-        }});
+        tokens.extend(
+            quote_spanned! {self.0.span().resolved_at(Span::mixed_site())=> {
+                #[allow(clippy::useless_conversion)]
+                <::yew::virtual_dom::VNode as ::std::convert::From<_>>::from(#new_tokens)
+            }},
+        );
     }
 }
 
 /// This trait represents a type that can be unfolded into multiple html nodes.
 pub trait ToNodeIterator {
-    /// Generate a token stream which produces a value that implements IntoIterator<Item=T> where T is inferred by the compiler.
-    /// The easiest way to achieve this is to call `.into()` on each element.
-    /// If the resulting iterator only ever yields a single item this function should return None instead.
+    /// Generate a token stream which produces a value that implements IntoIterator<Item=T> where T
+    /// is inferred by the compiler. The easiest way to achieve this is to call `.into()` on
+    /// each element. If the resulting iterator only ever yields a single item this function
+    /// should return None instead.
     fn to_node_iterator_stream(&self) -> Option<TokenStream>;
 }
 
@@ -234,7 +241,8 @@ impl HtmlChildrenTree {
         let Self(children) = self;
 
         if self.only_single_node_children() {
-            // optimize for the common case where all children are single nodes (only using literal html).
+            // optimize for the common case where all children are single nodes (only using literal
+            // html).
             let children_into = children
                 .iter()
                 .map(|child| quote_spanned! {child.span()=> ::std::convert::Into::into(#child) });
@@ -243,7 +251,7 @@ impl HtmlChildrenTree {
             };
         }
 
-        let vec_ident = Ident::new("__yew_v", Span::call_site());
+        let vec_ident = Ident::new("__yew_v", Span::mixed_site());
         let add_children_streams = children.iter().map(|child| {
             if let Some(node_iterator_stream) = child.to_node_iterator_stream() {
                 quote! {
@@ -273,6 +281,64 @@ impl HtmlChildrenTree {
         }
 
         Ok(children)
+    }
+
+    pub fn to_children_renderer_tokens(&self) -> Option<TokenStream> {
+        match self.0[..] {
+            [] => None,
+            [HtmlTree::Component(ref children)] => Some(quote! { #children }),
+            [HtmlTree::Element(ref children)] => Some(quote! { #children }),
+            [HtmlTree::Block(ref m)] => {
+                // We only want to process `{vnode}` and not `{for vnodes}`.
+                // This should be converted into a if let guard once https://github.com/rust-lang/rust/issues/51114 is stable.
+                // Or further nested once deref pattern (https://github.com/rust-lang/rust/issues/87121) is stable.
+                if let HtmlBlock {
+                    content: BlockContent::Node(children),
+                    ..
+                } = m.as_ref()
+                {
+                    Some(quote! { #children })
+                } else {
+                    Some(quote! { ::yew::html::ChildrenRenderer::new(#self) })
+                }
+            }
+            _ => Some(quote! { ::yew::html::ChildrenRenderer::new(#self) }),
+        }
+    }
+
+    pub fn to_vnode_tokens(&self) -> TokenStream {
+        match self.0[..] {
+            [] => quote! {::std::default::Default::default() },
+            [HtmlTree::Component(ref children)] => {
+                quote! { ::yew::html::IntoPropValue::<::yew::virtual_dom::VNode>::into_prop_value(#children) }
+            }
+            [HtmlTree::Element(ref children)] => {
+                quote! { ::yew::html::IntoPropValue::<::yew::virtual_dom::VNode>::into_prop_value(#children) }
+            }
+            [HtmlTree::Block(ref m)] => {
+                // We only want to process `{vnode}` and not `{for vnodes}`.
+                // This should be converted into a if let guard once https://github.com/rust-lang/rust/issues/51114 is stable.
+                // Or further nested once deref pattern (https://github.com/rust-lang/rust/issues/87121) is stable.
+                if let HtmlBlock {
+                    content: BlockContent::Node(children),
+                    ..
+                } = m.as_ref()
+                {
+                    quote! { ::yew::html::IntoPropValue::<::yew::virtual_dom::VNode>::into_prop_value(#children) }
+                } else {
+                    quote! {
+                        ::yew::html::IntoPropValue::<::yew::virtual_dom::VNode>::into_prop_value(
+                            ::yew::html::ChildrenRenderer::new(#self)
+                        )
+                    }
+                }
+            }
+            _ => quote! {
+                ::yew::html::IntoPropValue::<::yew::virtual_dom::VNode>::into_prop_value(
+                    ::yew::html::ChildrenRenderer::new(#self)
+                )
+            },
+        }
     }
 }
 
@@ -309,9 +375,9 @@ impl ToTokens for HtmlRootBraced {
 
         tokens.extend(quote_spanned! {brace.span.span()=>
             {
-                ::yew::virtual_dom::VNode::VList(
+                ::yew::virtual_dom::VNode::VList(::std::rc::Rc::new(
                     ::yew::virtual_dom::VList::with_children(#children, ::std::option::Option::None)
-                )
+                ))
             }
         });
     }

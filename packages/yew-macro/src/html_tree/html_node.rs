@@ -1,12 +1,13 @@
-use super::ToNodeIterator;
-use crate::stringify::Stringify;
-use crate::PeekValue;
-use proc_macro2::TokenStream;
-use quote::{quote_spanned, ToTokens};
+use proc_macro2::{Span, TokenStream};
+use quote::{quote, quote_spanned, ToTokens};
 use syn::buffer::Cursor;
 use syn::parse::{Parse, ParseStream, Result};
 use syn::spanned::Spanned;
 use syn::{Expr, Lit};
+
+use super::ToNodeIterator;
+use crate::stringify::Stringify;
+use crate::PeekValue;
 
 pub enum HtmlNode {
     Literal(Box<Lit>),
@@ -16,9 +17,19 @@ pub enum HtmlNode {
 impl Parse for HtmlNode {
     fn parse(input: ParseStream) -> Result<Self> {
         let node = if HtmlNode::peek(input.cursor()).is_some() {
-            let lit: Lit = input.parse()?;
-            if matches!(lit, Lit::ByteStr(_) | Lit::Byte(_) | Lit::Verbatim(_)) {
-                return Err(syn::Error::new(lit.span(), "unsupported type"));
+            let lit = input.parse()?;
+            match lit {
+                Lit::ByteStr(lit) => {
+                    return Err(syn::Error::new(
+                        lit.span(),
+                        "byte-strings can't be converted to HTML text
+                         note: remove the `b` prefix or convert this to a `String`",
+                    ))
+                }
+                Lit::Verbatim(lit) => {
+                    return Err(syn::Error::new(lit.span(), "unsupported literal"))
+                }
+                _ => (),
             }
             HtmlNode::Literal(Box::new(lit))
         } else {
@@ -48,7 +59,7 @@ impl ToTokens for HtmlNode {
                 let sr = lit.stringify();
                 quote_spanned! {lit.span()=> ::yew::virtual_dom::VText::new(#sr) }
             }
-            HtmlNode::Expression(expr) => quote_spanned! {expr.span()=> #expr},
+            HtmlNode::Expression(expr) => quote! {#expr},
         });
     }
 }
@@ -59,9 +70,9 @@ impl ToNodeIterator for HtmlNode {
             HtmlNode::Literal(_) => None,
             HtmlNode::Expression(expr) => {
                 // NodeSeq turns both Into<T> and Vec<Into<T>> into IntoIterator<Item = T>
-                Some(
-                    quote_spanned! {expr.span()=> ::std::convert::Into::<::yew::utils::NodeSeq<_, _>>::into(#expr)},
-                )
+                Some(quote_spanned! {expr.span().resolved_at(Span::call_site())=>
+                    ::std::convert::Into::<::yew::utils::NodeSeq<_, _>>::into(#expr)
+                })
             }
         }
     }

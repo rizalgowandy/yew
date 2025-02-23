@@ -8,11 +8,11 @@ pub enum Msg {
     UpdateName(String),
 }
 
-pub struct Model {
+pub struct App {
     name: String,
 }
 
-impl Component for Model {
+impl Component for App {
     type Message = Msg;
     type Properties = ();
 
@@ -53,14 +53,14 @@ fn create_canvas(document: &Document) -> HtmlCanvasElement {
     canvas.set_height(100);
     let ctx =
         CanvasRenderingContext2d::from(JsValue::from(canvas.get_context("2d").unwrap().unwrap()));
-    ctx.set_fill_style(&JsValue::from_str("green"));
+    ctx.set_fill_style_str("green");
     ctx.fill_rect(10., 10., 50., 50.);
 
     canvas
 }
 
 fn main() {
-    let document = gloo_utils::document();
+    let document = gloo::utils::document();
     let body = document.query_selector("body").unwrap().unwrap();
 
     let canvas = create_canvas(&document);
@@ -73,5 +73,5 @@ fn main() {
 
     body.append_child(&mount_point).unwrap();
 
-    yew::start_app_in_element::<Model>(mount_point);
+    yew::Renderer::<App>::with_root(mount_point).render();
 }

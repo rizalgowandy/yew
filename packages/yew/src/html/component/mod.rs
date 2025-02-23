@@ -1,26 +1,46 @@
 //! Components wrapped with context including properties, state, and link
 
 mod children;
+#[cfg(any(feature = "csr", feature = "ssr"))]
 mod lifecycle;
+mod marker;
 mod properties;
 mod scope;
 
-use super::Html;
-pub use children::*;
-pub use properties::*;
-pub(crate) use scope::Scoped;
-pub use scope::{AnyScope, Scope, SendAsMessage};
 use std::rc::Rc;
 
-/// The [`Component`]'s context. This contains component's [`Scope`] and and props and
-/// is passed to every lifecycle method.
-#[derive(Debug)]
-pub struct Context<COMP: Component> {
-    pub(crate) scope: Scope<COMP>,
-    pub(crate) props: Rc<COMP::Properties>,
+pub use children::*;
+pub use marker::*;
+pub use properties::*;
+#[cfg(feature = "csr")]
+pub(crate) use scope::Scoped;
+pub use scope::{AnyScope, Scope, SendAsMessage};
+
+use super::{Html, HtmlResult, IntoHtmlResult};
+
+#[cfg(feature = "hydration")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum RenderMode {
+    Hydration,
+    Render,
+    #[cfg(feature = "ssr")]
+    Ssr,
 }
 
-impl<COMP: Component> Context<COMP> {
+/// The [`Component`]'s context. This contains component's [`Scope`] and props and
+/// is passed to every lifecycle method.
+#[derive(Debug)]
+pub struct Context<COMP: BaseComponent> {
+    scope: Scope<COMP>,
+    props: Rc<COMP::Properties>,
+    #[cfg(feature = "hydration")]
+    creation_mode: RenderMode,
+
+    #[cfg(feature = "hydration")]
+    prepared_state: Option<String>,
+}
+
+impl<COMP: BaseComponent> Context<COMP> {
     /// The component scope
     #[inline]
     pub fn link(&self) -> &Scope<COMP> {
@@ -30,8 +50,69 @@ impl<COMP: Component> Context<COMP> {
     /// The component's props
     #[inline]
     pub fn props(&self) -> &COMP::Properties {
-        &*self.props
+        &self.props
     }
+
+    #[cfg(feature = "hydration")]
+    pub(crate) fn creation_mode(&self) -> RenderMode {
+        self.creation_mode
+    }
+
+    /// The component's prepared state
+    pub fn prepared_state(&self) -> Option<&str> {
+        #[cfg(not(feature = "hydration"))]
+        let state = None;
+
+        #[cfg(feature = "hydration")]
+        let state = self.prepared_state.as_deref();
+
+        state
+    }
+}
+
+/// The common base of both function components and struct components.
+///
+/// If you are taken here by doc links, you might be looking for [`Component`] or
+/// [`#[function_component]`](crate::functional::function_component).
+///
+/// We provide a blanket implementation of this trait for every member that implements
+/// [`Component`].
+///
+/// # Warning
+///
+/// This trait may be subject to heavy changes between versions and is not intended for direct
+/// implementation.
+///
+/// You should used the [`Component`] trait or the
+/// [`#[function_component]`](crate::functional::function_component) macro to define your
+/// components.
+pub trait BaseComponent: Sized + 'static {
+    /// The Component's Message.
+    type Message: 'static;
+
+    /// The Component's Properties.
+    type Properties: Properties;
+
+    /// Creates a component.
+    fn create(ctx: &Context<Self>) -> Self;
+
+    /// Updates component's internal state.
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool;
+
+    /// React to changes of component properties.
+    fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool;
+
+    /// Returns a component layout to be rendered.
+    fn view(&self, ctx: &Context<Self>) -> HtmlResult;
+
+    /// Notified after a layout is rendered.
+    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool);
+
+    /// Notified before a component is destroyed.
+    fn destroy(&mut self, ctx: &Context<Self>);
+
+    /// Prepares the server-side state.
+    fn prepare_state(&self) -> Option<String>;
 }
 
 /// Components are the basic building blocks of the UI in a Yew app. Each Component
@@ -54,22 +135,26 @@ pub trait Component: Sized + 'static {
     /// Called when component is created.
     fn create(ctx: &Context<Self>) -> Self;
 
-    /// Called when a new message is sent to the component via it's scope.
+    /// Called when a new message is sent to the component via its scope.
     ///
     /// Components handle messages in their `update` method and commonly use this method
     /// to update their state and (optionally) re-render themselves.
     ///
     /// Returned bool indicates whether to render this Component after update.
+    ///
+    /// By default, this function will return true and thus make the component re-render.
     #[allow(unused_variables)]
     fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
-        false
+        true
     }
 
     /// Called when properties passed to the component change
     ///
     /// Returned bool indicates whether to render this Component after changed.
+    ///
+    /// By default, this function will return true and thus make the component re-render.
     #[allow(unused_variables)]
-    fn changed(&mut self, ctx: &Context<Self>) -> bool {
+    fn changed(&mut self, ctx: &Context<Self>, _old_props: &Self::Properties) -> bool {
         true
     }
 
@@ -91,7 +176,89 @@ pub trait Component: Sized + 'static {
     #[allow(unused_variables)]
     fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {}
 
+    /// Prepares the state during server side rendering.
+    ///
+    /// This state will be sent to the client side and is available via `ctx.prepared_state()`.
+    ///
+    /// This method is only called during server-side rendering after the component has been
+    /// rendered.
+    fn prepare_state(&self) -> Option<String> {
+        None
+    }
+
     /// Called right before a Component is unmounted.
     #[allow(unused_variables)]
     fn destroy(&mut self, ctx: &Context<Self>) {}
+}
+
+impl<T> BaseComponent for T
+where
+    T: Sized + Component + 'static,
+{
+    type Message = <T as Component>::Message;
+    type Properties = <T as Component>::Properties;
+
+    fn create(ctx: &Context<Self>) -> Self {
+        Component::create(ctx)
+    }
+
+    fn update(&mut self, ctx: &Context<Self>, msg: Self::Message) -> bool {
+        Component::update(self, ctx, msg)
+    }
+
+    fn changed(&mut self, ctx: &Context<Self>, old_props: &Self::Properties) -> bool {
+        Component::changed(self, ctx, old_props)
+    }
+
+    fn view(&self, ctx: &Context<Self>) -> HtmlResult {
+        Component::view(self, ctx).into_html_result()
+    }
+
+    fn rendered(&mut self, ctx: &Context<Self>, first_render: bool) {
+        Component::rendered(self, ctx, first_render)
+    }
+
+    fn destroy(&mut self, ctx: &Context<Self>) {
+        Component::destroy(self, ctx)
+    }
+
+    fn prepare_state(&self) -> Option<String> {
+        Component::prepare_state(self)
+    }
+}
+
+#[cfg(test)]
+#[cfg(any(feature = "ssr", feature = "csr"))]
+mod tests {
+    use super::*;
+
+    struct MyCustomComponent;
+
+    impl Component for MyCustomComponent {
+        type Message = ();
+        type Properties = ();
+
+        fn create(_ctx: &Context<Self>) -> Self {
+            Self
+        }
+
+        fn view(&self, _ctx: &Context<Self>) -> Html {
+            Default::default()
+        }
+    }
+
+    #[test]
+    fn make_sure_component_update_and_changed_rerender() {
+        let mut comp = MyCustomComponent;
+        let ctx = Context {
+            scope: Scope::new(None),
+            props: Rc::new(()),
+            #[cfg(feature = "hydration")]
+            creation_mode: crate::html::RenderMode::Hydration,
+            #[cfg(feature = "hydration")]
+            prepared_state: None,
+        };
+        assert!(Component::update(&mut comp, &ctx, ()));
+        assert!(Component::changed(&mut comp, &ctx, &Rc::new(())));
+    }
 }

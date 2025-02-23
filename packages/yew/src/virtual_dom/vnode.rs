@@ -1,178 +1,115 @@
 //! This module contains the implementation of abstract virtual node.
 
-use super::{Key, VChild, VComp, VDiff, VList, VPortal, VTag, VText};
-use crate::html::{AnyScope, Component, NodeRef};
-use gloo::console;
 use std::cmp::PartialEq;
-use std::fmt;
 use std::iter::FromIterator;
-use wasm_bindgen::JsCast;
+use std::rc::Rc;
+use std::{fmt, mem};
 
-use web_sys::{Element, Node};
+use web_sys::Node;
+
+use super::{Key, VChild, VComp, VList, VPortal, VSuspense, VTag, VText};
+use crate::html::{BaseComponent, ImplicitClone};
+use crate::virtual_dom::VRaw;
+use crate::AttrValue;
 
 /// Bind virtual element to a DOM reference.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
+#[must_use = "html does not do anything unless returned to Yew for rendering."]
 pub enum VNode {
     /// A bind between `VTag` and `Element`.
-    VTag(Box<VTag>),
+    VTag(Rc<VTag>),
     /// A bind between `VText` and `TextNode`.
     VText(VText),
     /// A bind between `VComp` and `Element`.
-    VComp(VComp),
+    VComp(Rc<VComp>),
     /// A holder for a list of other nodes.
-    VList(VList),
+    VList(Rc<VList>),
     /// A portal to another part of the document
-    VPortal(VPortal),
+    VPortal(Rc<VPortal>),
     /// A holder for any `Node` (necessary for replacing node).
     VRef(Node),
+    /// A suspendible document fragment.
+    VSuspense(Rc<VSuspense>),
+    /// A raw HTML string, represented by [`AttrValue`](crate::AttrValue).
+    ///
+    /// Also see: [`VNode::from_html_unchecked`]
+    VRaw(VRaw),
 }
+
+impl ImplicitClone for VNode {}
 
 impl VNode {
-    pub fn key(&self) -> Option<Key> {
+    pub fn key(&self) -> Option<&Key> {
         match self {
-            VNode::VComp(vcomp) => vcomp.key.clone(),
-            VNode::VList(vlist) => vlist.key.clone(),
+            VNode::VComp(vcomp) => vcomp.key.as_ref(),
+            VNode::VList(vlist) => vlist.key.as_ref(),
             VNode::VRef(_) => None,
-            VNode::VTag(vtag) => vtag.key.clone(),
+            VNode::VTag(vtag) => vtag.key.as_ref(),
             VNode::VText(_) => None,
             VNode::VPortal(vportal) => vportal.node.key(),
+            VNode::VSuspense(vsuspense) => vsuspense.key.as_ref(),
+            VNode::VRaw(_) => None,
         }
     }
 
-    /// Returns true if the [VNode] has a key without needlessly cloning the key.
+    /// Returns true if the [VNode] has a key.
     pub fn has_key(&self) -> bool {
-        match self {
-            VNode::VComp(vcomp) => vcomp.key.is_some(),
-            VNode::VList(vlist) => vlist.key.is_some(),
-            VNode::VRef(_) | VNode::VText(_) => false,
-            VNode::VTag(vtag) => vtag.key.is_some(),
-            VNode::VPortal(vportal) => vportal.node.has_key(),
-        }
+        self.key().is_some()
     }
 
-    /// Returns the first DOM node if available
-    pub(crate) fn first_node(&self) -> Option<Node> {
-        match self {
-            VNode::VTag(vtag) => vtag.reference().cloned().map(JsCast::unchecked_into),
-            VNode::VText(vtext) => vtext
-                .reference
-                .as_ref()
-                .cloned()
-                .map(JsCast::unchecked_into),
-            VNode::VComp(vcomp) => vcomp.node_ref.get(),
-            VNode::VList(vlist) => vlist.get(0).and_then(VNode::first_node),
-            VNode::VRef(node) => Some(node.clone()),
-            VNode::VPortal(vportal) => vportal.next_sibling(),
-        }
-    }
-
-    /// Returns the first DOM node that is used to designate the position of the virtual DOM node.
-    pub(crate) fn unchecked_first_node(&self) -> Node {
-        match self {
-            VNode::VTag(vtag) => vtag
-                .reference()
-                .expect("VTag is not mounted")
-                .clone()
-                .into(),
-            VNode::VText(vtext) => {
-                let text_node = vtext.reference.as_ref().expect("VText is not mounted");
-                text_node.clone().into()
-            }
-            VNode::VComp(vcomp) => vcomp.node_ref.get().unwrap_or_else(|| {
-                #[cfg(not(debug_assertions))]
-                panic!("no node_ref; VComp should be mounted");
-
-                #[cfg(debug_assertions)]
-                panic!(
-                    "no node_ref; VComp should be mounted after: {:?}",
-                    crate::virtual_dom::vcomp::get_event_log(vcomp.id),
-                );
-            }),
-            VNode::VList(vlist) => vlist
-                .get(0)
-                .expect("VList is not mounted")
-                .unchecked_first_node(),
-            VNode::VRef(node) => node.clone(),
-            VNode::VPortal(_) => panic!("portals have no first node, they are empty inside"),
-        }
-    }
-
-    pub(crate) fn move_before(&self, parent: &Element, next_sibling: &Option<Node>) {
-        match self {
-            VNode::VList(vlist) => {
-                for node in vlist.iter() {
-                    node.move_before(parent, next_sibling);
+    /// Acquires a mutable reference of current VNode as a VList.
+    ///
+    /// Creates a VList with the current node as the first child if current VNode is not a VList.
+    pub fn to_vlist_mut(&mut self) -> &mut VList {
+        loop {
+            match *self {
+                Self::VList(ref mut m) => return Rc::make_mut(m),
+                _ => {
+                    *self =
+                        VNode::VList(Rc::new(VList::with_children(vec![mem::take(self)], None)));
                 }
             }
-            VNode::VComp(vcomp) => {
-                vcomp
-                    .root_vnode()
-                    .expect("VComp has no root vnode")
-                    .move_before(parent, next_sibling);
-            }
-            VNode::VPortal(_) => {} // no need to move portals
-            _ => super::insert_node(&self.unchecked_first_node(), parent, next_sibling.as_ref()),
-        };
-    }
-}
-
-impl VDiff for VNode {
-    /// Remove VNode from parent.
-    fn detach(&mut self, parent: &Element) {
-        match *self {
-            VNode::VTag(ref mut vtag) => vtag.detach(parent),
-            VNode::VText(ref mut vtext) => vtext.detach(parent),
-            VNode::VComp(ref mut vcomp) => vcomp.detach(parent),
-            VNode::VList(ref mut vlist) => vlist.detach(parent),
-            VNode::VRef(ref node) => {
-                if parent.remove_child(node).is_err() {
-                    console::warn!("Node not found to remove VRef");
-                }
-            }
-            VNode::VPortal(ref mut vportal) => vportal.detach(parent),
         }
     }
 
-    fn apply(
-        &mut self,
-        parent_scope: &AnyScope,
-        parent: &Element,
-        next_sibling: NodeRef,
-        ancestor: Option<VNode>,
-    ) -> NodeRef {
-        match *self {
-            VNode::VTag(ref mut vtag) => vtag.apply(parent_scope, parent, next_sibling, ancestor),
-            VNode::VText(ref mut vtext) => {
-                vtext.apply(parent_scope, parent, next_sibling, ancestor)
-            }
-            VNode::VComp(ref mut vcomp) => {
-                vcomp.apply(parent_scope, parent, next_sibling, ancestor)
-            }
-            VNode::VList(ref mut vlist) => {
-                vlist.apply(parent_scope, parent, next_sibling, ancestor)
-            }
-            VNode::VRef(ref mut node) => {
-                if let Some(mut ancestor) = ancestor {
-                    if let VNode::VRef(n) = &ancestor {
-                        if node == n {
-                            return NodeRef::new(node.clone());
-                        }
-                    }
-                    ancestor.detach(parent);
-                }
-                super::insert_node(node, parent, next_sibling.get().as_ref());
-                NodeRef::new(node.clone())
-            }
-            VNode::VPortal(ref mut vportal) => {
-                vportal.apply(parent_scope, parent, next_sibling, ancestor)
-            }
-        }
+    /// Create a [`VNode`] from a string of HTML
+    ///
+    /// # Behavior in browser
+    ///
+    /// In the browser, this function creates an element with the same XML namespace as the parent,
+    /// sets the passed HTML to its `innerHTML` and inserts the contents of it into the DOM.
+    ///
+    /// # Behavior on server
+    ///
+    /// When rendering on the server, the contents of HTML are directly injected into the HTML
+    /// stream.
+    ///
+    /// ## Warning
+    ///
+    /// The contents are **not** sanitized or validated. You, as the developer, are responsible to
+    /// ensure the HTML string passed to this method are _valid_ and _not malicious_
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use yew::{html, AttrValue, Html};
+    /// # fn _main() {
+    /// let parsed = Html::from_html_unchecked(AttrValue::from("<div>content</div>"));
+    /// let _: Html = html! {
+    ///     <div>
+    ///         {parsed}
+    ///     </div>
+    /// };
+    /// # }
+    /// ```
+    pub fn from_html_unchecked(html: AttrValue) -> Self {
+        VNode::VRaw(VRaw { html })
     }
 }
 
 impl Default for VNode {
     fn default() -> Self {
-        VNode::VList(VList::default())
+        VNode::VList(Rc::new(VList::default()))
     }
 }
 
@@ -186,30 +123,44 @@ impl From<VText> for VNode {
 impl From<VList> for VNode {
     #[inline]
     fn from(vlist: VList) -> Self {
-        VNode::VList(vlist)
+        VNode::VList(Rc::new(vlist))
     }
 }
 
 impl From<VTag> for VNode {
     #[inline]
     fn from(vtag: VTag) -> Self {
-        VNode::VTag(Box::new(vtag))
+        VNode::VTag(Rc::new(vtag))
     }
 }
 
 impl From<VComp> for VNode {
     #[inline]
     fn from(vcomp: VComp) -> Self {
-        VNode::VComp(vcomp)
+        VNode::VComp(Rc::new(vcomp))
+    }
+}
+
+impl From<VSuspense> for VNode {
+    #[inline]
+    fn from(vsuspense: VSuspense) -> Self {
+        VNode::VSuspense(Rc::new(vsuspense))
+    }
+}
+
+impl From<VPortal> for VNode {
+    #[inline]
+    fn from(vportal: VPortal) -> Self {
+        VNode::VPortal(Rc::new(vportal))
     }
 }
 
 impl<COMP> From<VChild<COMP>> for VNode
 where
-    COMP: Component,
+    COMP: BaseComponent,
 {
     fn from(vchild: VChild<COMP>) -> Self {
-        VNode::VComp(VComp::from(vchild))
+        VNode::VComp(Rc::new(VComp::from(vchild)))
     }
 }
 
@@ -221,10 +172,10 @@ impl<T: ToString> From<T> for VNode {
 
 impl<A: Into<VNode>> FromIterator<A> for VNode {
     fn from_iter<T: IntoIterator<Item = A>>(iter: T) -> Self {
-        VNode::VList(VList::with_children(
+        VNode::VList(Rc::new(VList::with_children(
             iter.into_iter().map(|n| n.into()).collect(),
             None,
-        ))
+        )))
     }
 }
 
@@ -237,53 +188,76 @@ impl fmt::Debug for VNode {
             VNode::VList(ref vlist) => vlist.fmt(f),
             VNode::VRef(ref vref) => write!(f, "VRef ( \"{}\" )", crate::utils::print_node(vref)),
             VNode::VPortal(ref vportal) => vportal.fmt(f),
+            VNode::VSuspense(ref vsuspense) => vsuspense.fmt(f),
+            VNode::VRaw(ref vraw) => write!(f, "VRaw {{ {} }}", vraw.html),
         }
     }
 }
 
-impl PartialEq for VNode {
-    fn eq(&self, other: &VNode) -> bool {
-        match (self, other) {
-            (VNode::VTag(a), VNode::VTag(b)) => a == b,
-            (VNode::VText(a), VNode::VText(b)) => a == b,
-            (VNode::VList(a), VNode::VList(b)) => a == b,
-            (VNode::VRef(a), VNode::VRef(b)) => a == b,
-            // TODO: Need to improve PartialEq for VComp before enabling.
-            (VNode::VComp(_), VNode::VComp(_)) => false,
-            _ => false,
-        }
-    }
-}
+#[cfg(feature = "ssr")]
+mod feat_ssr {
+    use futures::future::{FutureExt, LocalBoxFuture};
 
-#[cfg(test)]
-mod layout_tests {
     use super::*;
-    use crate::virtual_dom::layout_tests::{diff_layouts, TestLayout};
+    use crate::feat_ssr::VTagKind;
+    use crate::html::AnyScope;
+    use crate::platform::fmt::BufWriter;
 
-    #[cfg(feature = "wasm_test")]
-    use wasm_bindgen_test::{wasm_bindgen_test as test, wasm_bindgen_test_configure};
+    impl VNode {
+        pub(crate) fn render_into_stream<'a>(
+            &'a self,
+            w: &'a mut BufWriter,
+            parent_scope: &'a AnyScope,
+            hydratable: bool,
+            parent_vtag_kind: VTagKind,
+        ) -> LocalBoxFuture<'a, ()> {
+            async fn render_into_stream_(
+                this: &VNode,
+                w: &mut BufWriter,
+                parent_scope: &AnyScope,
+                hydratable: bool,
+                parent_vtag_kind: VTagKind,
+            ) {
+                match this {
+                    VNode::VTag(vtag) => vtag.render_into_stream(w, parent_scope, hydratable).await,
+                    VNode::VText(vtext) => {
+                        vtext
+                            .render_into_stream(w, parent_scope, hydratable, parent_vtag_kind)
+                            .await
+                    }
+                    VNode::VComp(vcomp) => {
+                        vcomp
+                            .render_into_stream(w, parent_scope, hydratable, parent_vtag_kind)
+                            .await
+                    }
+                    VNode::VList(vlist) => {
+                        vlist
+                            .render_into_stream(w, parent_scope, hydratable, parent_vtag_kind)
+                            .await
+                    }
+                    // We are pretty safe here as it's not possible to get a web_sys::Node without
+                    // DOM support in the first place.
+                    //
+                    // The only exception would be to use `ServerRenderer` in a browser or wasm32
+                    // environment with jsdom present.
+                    VNode::VRef(_) => {
+                        panic!("VRef is not possible to be rendered in to a string.")
+                    }
+                    // Portals are not rendered.
+                    VNode::VPortal(_) => {}
+                    VNode::VSuspense(vsuspense) => {
+                        vsuspense
+                            .render_into_stream(w, parent_scope, hydratable, parent_vtag_kind)
+                            .await
+                    }
 
-    #[cfg(feature = "wasm_test")]
-    wasm_bindgen_test_configure!(run_in_browser);
+                    VNode::VRaw(vraw) => vraw.render_into_stream(w, parent_scope, hydratable).await,
+                }
+            }
 
-    #[test]
-    fn diff() {
-        let document = gloo_utils::document();
-        let vref_node_1 = VNode::VRef(document.create_element("i").unwrap().into());
-        let vref_node_2 = VNode::VRef(document.create_element("b").unwrap().into());
-
-        let layout1 = TestLayout {
-            name: "1",
-            node: vref_node_1,
-            expected: "<i></i>",
-        };
-
-        let layout2 = TestLayout {
-            name: "2",
-            node: vref_node_2,
-            expected: "<b></b>",
-        };
-
-        diff_layouts(vec![layout1, layout2]);
+            async move {
+                render_into_stream_(self, w, parent_scope, hydratable, parent_vtag_kind).await
+            }.boxed_local()
+        }
     }
 }

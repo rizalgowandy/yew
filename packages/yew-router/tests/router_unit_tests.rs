@@ -1,3 +1,6 @@
+// TODO: remove the cfg after wasm-bindgen-test stops emitting the function unconditionally
+#![cfg(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none")))]
+
 use wasm_bindgen_test::{wasm_bindgen_test as test, wasm_bindgen_test_configure};
 use yew_router::prelude::*;
 
@@ -46,5 +49,28 @@ fn router_trailing_slash() {
             name: "cooking-recipes".to_string()
         }),
         AppRoute::recognize("/category/cooking-recipes/")
+    );
+}
+
+#[test]
+fn router_url_encoding() {
+    #[derive(Routable, Debug, Clone, PartialEq)]
+    enum AppRoute {
+        #[at("/")]
+        Root,
+        #[at("/search/:query")]
+        Search { query: String },
+    }
+
+    assert_eq!(
+        yew_router::__macro::decode_for_url("/search/a%2Fb/").unwrap(),
+        "/search/a/b/"
+    );
+
+    assert_eq!(
+        Some(AppRoute::Search {
+            query: "a/b".to_string()
+        }),
+        AppRoute::recognize("/search/a%2Fb/")
     );
 }

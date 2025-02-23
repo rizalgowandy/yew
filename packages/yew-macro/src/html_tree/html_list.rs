@@ -1,11 +1,13 @@
-use super::{html_dashed_name::HtmlDashedName, HtmlChildrenTree, TagTokens};
-use crate::{props::Prop, Peek, PeekValue};
-use boolinator::Boolinator;
 use quote::{quote, quote_spanned, ToTokens};
 use syn::buffer::Cursor;
 use syn::parse::{Parse, ParseStream};
 use syn::spanned::Spanned;
 use syn::Expr;
+
+use super::html_dashed_name::HtmlDashedName;
+use super::{HtmlChildrenTree, TagTokens};
+use crate::props::Prop;
+use crate::{Peek, PeekValue};
 
 pub struct HtmlList {
     open: HtmlListOpen,
@@ -72,13 +74,13 @@ impl ToTokens for HtmlList {
         let spanned = {
             let open = open.to_spanned();
             let close = close.to_spanned();
-            quote! { #open#close }
+            quote! { #open #close }
         };
 
         tokens.extend(quote_spanned! {spanned.span()=>
-            ::yew::virtual_dom::VNode::VList(
+            ::yew::virtual_dom::VNode::VList(::std::rc::Rc::new(
                 ::yew::virtual_dom::VList::with_children(#children, #key)
-            )
+            ))
         });
     }
 }
@@ -96,14 +98,16 @@ impl HtmlListOpen {
 impl PeekValue<()> for HtmlListOpen {
     fn peek(cursor: Cursor) -> Option<()> {
         let (punct, cursor) = cursor.punct()?;
-        (punct.as_char() == '<').as_option()?;
+        if punct.as_char() != '<' {
+            return None;
+        }
         // make sure it's either a property (key=value) or it's immediately closed
         if let Some((_, cursor)) = HtmlDashedName::peek(cursor) {
             let (punct, _) = cursor.punct()?;
-            (punct.as_char() == '=' || punct.as_char() == '?').as_option()
+            (punct.as_char() == '=' || punct.as_char() == '?').then_some(())
         } else {
             let (punct, _) = cursor.punct()?;
-            (punct.as_char() == '>').as_option()
+            (punct.as_char() == '>').then_some(())
         }
     }
 }
@@ -153,12 +157,16 @@ impl HtmlListClose {
 impl PeekValue<()> for HtmlListClose {
     fn peek(cursor: Cursor) -> Option<()> {
         let (punct, cursor) = cursor.punct()?;
-        (punct.as_char() == '<').as_option()?;
+        if punct.as_char() != '<' {
+            return None;
+        }
         let (punct, cursor) = cursor.punct()?;
-        (punct.as_char() == '/').as_option()?;
+        if punct.as_char() != '/' {
+            return None;
+        }
 
         let (punct, _) = cursor.punct()?;
-        (punct.as_char() == '>').as_option()
+        (punct.as_char() == '>').then_some(())
     }
 }
 impl Parse for HtmlListClose {

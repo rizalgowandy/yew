@@ -1,122 +1,112 @@
-//! This module contains types to support multi-threading and state management.
+//! This module contains Yew's web worker implementation.
+//!
+//! ## Types
+//!
+//! There're a couple kinds of agents:
+//!
+//! #### Oneshot
+//!
+//! A kind of agent that for each input, a single output is returned.
+//!
+//! #### Reactor
+//!
+//! A kind of agent that can send many inputs and receive many outputs over a single bridge.
+//!
+//! #### Worker
+//!
+//! The low-level implementation of agents that provides an actor model and communicates with
+//! multiple bridges.
+//!
+//! ## Reachability
+//!
+//! When an agent is spawned, each agent is associated with a reachability.
+//!
+//! #### Private
+//!
+//! Each time a bridge is created, a new instance
+//! of agent is spawned. This allows parallel computing between agents.
+//!
+//! #### Public
+//!
+//! Public agents are shared among all children of a provider.
+//! Only 1 instance will be spawned for each public agents provider.
+//!
+//! ### Provider
+//!
+//! Each Agent requires a provider to provide communications and maintain bridges.
+//! All hooks must be called within a provider.
+//!
+//! ## Communications with Agents
+//!
+//! Hooks provides means to communicate with agent instances.
+//!
+//! #### Bridge
+//!
+//! See: [`use_worker_bridge`](worker::use_worker_bridge),
+//! [`use_reactor_bridge`](reactor::use_reactor_bridge)
+//!
+//! A bridge takes a callback to receive outputs from agents
+//! and provides a handle to send inputs to agents.
+//!
+//! #### Subscription
+//!
+//! See: [`use_worker_subscription`](worker::use_worker_subscription),
+//! [`use_reactor_subscription`](reactor::use_reactor_subscription)
+//!
+//! Similar to bridges, a subscription produces a handle to send inputs to agents. However, instead
+//! of notifying the receiver with a callback, it collect all outputs into a slice.
+//!
+//! #### Runner
+//!
+//! See: [`use_oneshot_runner`](oneshot::use_oneshot_runner)
+//!
+//! Unlike other agents, oneshot bridges provide a `use_oneshot_runner` hook to execute oneshot
+//! agents on demand.
 
-mod hooks;
-mod link;
-mod local;
-mod pool;
-pub mod utils;
-mod worker;
+#![deny(
+    clippy::all,
+    missing_docs,
+    missing_debug_implementations,
+    bare_trait_objects,
+    anonymous_parameters,
+    elided_lifetimes_in_paths
+)]
 
-pub use hooks::{use_bridge, UseBridgeHandle};
-pub use link::AgentLink;
-pub(crate) use link::*;
-pub use local::{Context, Job};
-pub(crate) use pool::*;
-pub use pool::{Dispatched, Dispatcher};
-pub use worker::{Private, Public, Threaded};
+extern crate self as yew_agent;
 
-use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::ops::{Deref, DerefMut};
-use yew::callback::Callback;
+pub mod oneshot;
+pub mod reactor;
+pub mod worker;
 
-/// Declares the behavior of the agent.
-pub trait Agent: Sized + 'static {
-    /// Reach capability of the agent.
-    type Reach: Discoverer<Agent = Self>;
-    /// Type of an input message.
-    type Message;
-    /// Incoming message type.
-    type Input;
-    /// Outgoing message type.
-    type Output;
+#[doc(inline)]
+pub use gloo_worker::{Bincode, Codec, Registrable, Spawnable};
 
-    /// Creates an instance of an agent.
-    fn create(link: AgentLink<Self>) -> Self;
+mod reach;
+pub mod scope_ext;
 
-    /// This method called on every update message.
-    fn update(&mut self, msg: Self::Message);
+pub use reach::Reach;
 
-    /// This method called on when a new bridge created.
-    fn connected(&mut self, _id: HandlerId) {}
+mod utils;
 
-    /// This method called on every incoming message.
-    fn handle_input(&mut self, msg: Self::Input, id: HandlerId);
-
-    /// This method called on when a new bridge destroyed.
-    fn disconnected(&mut self, _id: HandlerId) {}
-
-    /// This method called when the agent is destroyed.
-    fn destroy(&mut self) {}
-
-    /// Represents the name of loading resorce for remote workers which
-    /// have to live in a separate files.
-    fn name_of_resource() -> &'static str {
-        "main.js"
-    }
-
-    /// Indicates whether the name of the resource is relative.
-    ///
-    /// The default implementation returns `false`, which will cause the result
-    /// returned by [`Self::name_of_resource`] to be interpreted as an absolute
-    /// URL. If `true` is returned, it will be interpreted as a relative URL.
-    fn resource_path_is_relative() -> bool {
-        false
-    }
-
-    /// Signifies if resource is a module.
-    /// This has pending browser support.
-    fn is_module() -> bool {
-        false
-    }
-}
-
-/// Id of responses handler.
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Copy)]
-pub struct HandlerId(usize, bool);
-
-impl HandlerId {
-    fn new(id: usize, respondable: bool) -> Self {
-        HandlerId(id, respondable)
-    }
-    fn raw_id(self) -> usize {
-        self.0
-    }
-    /// Indicates if a handler id corresponds to callback in the Agent runtime.
-    pub fn is_respondable(self) -> bool {
-        self.1
-    }
-}
-
-/// Determine a visibility of an agent.
 #[doc(hidden)]
-pub trait Discoverer {
-    type Agent: Agent;
-
-    /// Spawns an agent and returns `Bridge` implementation.
-    fn spawn_or_join(
-        _callback: Option<Callback<<Self::Agent as Agent>::Output>>,
-    ) -> Box<dyn Bridge<Self::Agent>>;
+pub mod __vendored {
+    pub use futures;
 }
 
-/// Bridge to a specific kind of worker.
-pub trait Bridge<AGN: Agent> {
-    /// Send a message to an agent.
-    fn send(&mut self, msg: AGN::Input);
-}
-
-/// This trait allows registering or getting the address of a worker.
-pub trait Bridged: Agent + Sized + 'static {
-    /// Creates a messaging bridge between a worker and the component.
-    fn bridge(callback: Callback<Self::Output>) -> Box<dyn Bridge<Self>>;
-}
-
-impl<T> Bridged for T
-where
-    T: Agent,
-    <T as Agent>::Reach: Discoverer<Agent = T>,
-{
-    fn bridge(callback: Callback<Self::Output>) -> Box<dyn Bridge<Self>> {
-        Self::Reach::spawn_or_join(Some(callback))
-    }
+pub mod prelude {
+    //! Prelude module to be imported when working with `yew-agent`.
+    //!
+    //! This module re-exports the frequently used types from the crate.
+    pub use crate::oneshot::{oneshot, use_oneshot_runner, UseOneshotRunnerHandle};
+    pub use crate::reach::Reach;
+    pub use crate::reactor::{
+        reactor, use_reactor_bridge, use_reactor_subscription, ReactorEvent, ReactorScope,
+        UseReactorBridgeHandle, UseReactorSubscriptionHandle,
+    };
+    pub use crate::scope_ext::{AgentScopeExt, ReactorBridgeHandle, WorkerBridgeHandle};
+    pub use crate::worker::{
+        use_worker_bridge, use_worker_subscription, UseWorkerBridgeHandle,
+        UseWorkerSubscriptionHandle, WorkerScope,
+    };
+    pub use crate::{Registrable, Spawnable};
 }

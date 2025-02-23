@@ -1,35 +1,35 @@
-use yew::prelude::*;
+#![no_implicit_prelude]
 
 fn compile_pass_lit() {
-    html! { if true {} };
-    html! { if true { <div/> } };
-    html! { if true { <div/><div/> } };
-    html! { if true { <><div/><div/></> } };
-    html! { if true { { html! {} } } };
-    html! { if true { { { let _x = 42; html! {} } } } };
-    html! { if true {} else {} };
-    html! { if true {} else if true {} };
-    html! { if true {} else if true {} else {} };
-    html! { if let Some(text) = Some("text") { <span>{ text }</span> } };
-    html! { <><div/>if true {}<div/></> };
-    html! { <div>if true {}</div> };
+    _ = ::yew::html! { if true {} };
+    _ = ::yew::html! { if true { <div/> } };
+    _ = ::yew::html! { if true { <div/><div/> } };
+    _ = ::yew::html! { if true { <><div/><div/></> } };
+    _ = ::yew::html! { if true { { ::yew::html! {} } } };
+    _ = ::yew::html! { if true { { { let _x = 42; ::yew::html! {} } } } };
+    _ = ::yew::html! { if true {} else {} };
+    _ = ::yew::html! { if true {} else if true {} };
+    _ = ::yew::html! { if true {} else if true {} else {} };
+    _ = ::yew::html! { if let ::std::option::Option::Some(text) = ::std::option::Option::Some("text") { <span>{ text }</span> } };
+    _ = ::yew::html! { <><div/>if true {}<div/></> };
+    _ = ::yew::html! { <div>if true {}</div> };
 }
 
 fn compile_pass_expr() {
     let condition = true;
 
-    html! { if condition {} };
-    html! { if condition { <div/> } };
-    html! { if condition { <div/><div/> } };
-    html! { if condition { <><div/><div/></> } };
-    html! { if condition { { html! {} } } };
-    html! { if condition { { { let _x = 42; html! {} } } } };
-    html! { if condition {} else {} };
-    html! { if condition {} else if condition {} };
-    html! { if condition {} else if condition {} else {} };
-    html! { if let Some(text) = Some("text") { <span>{ text }</span> } };
-    html! { <><div/>if condition {}<div/></> };
-    html! { <div>if condition {}</div> };
+    _ = ::yew::html! { if condition {} };
+    _ = ::yew::html! { if condition { <div/> } };
+    _ = ::yew::html! { if condition { <div/><div/> } };
+    _ = ::yew::html! { if condition { <><div/><div/></> } };
+    _ = ::yew::html! { if condition { { ::yew::html! {} } } };
+    _ = ::yew::html! { if condition { { { let _x = 42; ::yew::html! {} } } } };
+    _ = ::yew::html! { if condition {} else {} };
+    _ = ::yew::html! { if condition {} else if condition {} };
+    _ = ::yew::html! { if condition {} else if condition {} else {} };
+    _ = ::yew::html! { if let ::std::option::Option::Some(text) = ::std::option::Option::Some("text") { <span>{ text }</span> } };
+    _ = ::yew::html! { <><div/>if condition {}<div/></> };
+    _ = ::yew::html! { <div>if condition {}</div> };
 }
 
 fn main() {}

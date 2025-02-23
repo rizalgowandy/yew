@@ -2,13 +2,9 @@ use gloo::storage::{LocalStorage, Storage};
 use state::{Entry, Filter, State};
 use strum::IntoEnumIterator;
 use web_sys::HtmlInputElement as InputElement;
-use yew::{
-    classes,
-    events::{FocusEvent, KeyboardEvent},
-    html,
-    html::Scope,
-    Classes, Component, Context, Html, NodeRef, TargetCast,
-};
+use yew::events::{FocusEvent, KeyboardEvent};
+use yew::html::Scope;
+use yew::{classes, html, Classes, Component, Context, Html, NodeRef, TargetCast};
 
 mod state;
 
@@ -26,22 +22,18 @@ pub enum Msg {
     Focus,
 }
 
-pub struct Model {
+pub struct App {
     state: State,
     focus_ref: NodeRef,
 }
 
-impl Component for Model {
+impl Component for App {
     type Message = Msg;
     type Properties = ();
 
     fn create(_ctx: &Context<Self>) -> Self {
         let entries = LocalStorage::get(KEY).unwrap_or_else(|_| Vec::new());
-        let state = State {
-            entries,
-            filter: Filter::All,
-            edit_value: "".into(),
-        };
+        let state = State::new(entries);
         let focus_ref = NodeRef::default();
         Self { state, focus_ref }
     }
@@ -49,9 +41,10 @@ impl Component for Model {
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
             Msg::Add(description) => {
+                let description = description.trim();
                 if !description.is_empty() {
                     let entry = Entry {
-                        description: description.trim().to_string(),
+                        description: description.to_string(),
                         completed: false,
                         editing: false,
                     };
@@ -69,16 +62,23 @@ impl Component for Model {
                 self.state.filter = filter;
             }
             Msg::ToggleEdit(idx) => {
-                self.state.edit_value = self.state.entries[idx].description.clone();
+                let entry = self
+                    .state
+                    .entries
+                    .iter()
+                    .filter(|e| self.state.filter.fits(e))
+                    .nth(idx)
+                    .unwrap();
+                self.state.edit_value.clone_from(&entry.description);
                 self.state.clear_all_edit();
                 self.state.toggle_edit(idx);
             }
             Msg::ToggleAll => {
                 let status = !self.state.is_all_completed();
-                self.state.toggle_all(status);
+                self.state.set_completed(status);
             }
             Msg::Toggle(idx) => {
-                self.state.toggle(idx);
+                self.state.toggle_completed(idx);
             }
             Msg::ClearCompleted => {
                 self.state.clear_completed();
@@ -116,7 +116,14 @@ impl Component for Model {
                         />
                         <label for="toggle-all" />
                         <ul class="todo-list">
-                            { for self.state.entries.iter().filter(|e| self.state.filter.fits(e)).enumerate().map(|e| self.view_entry(e, ctx.link())) }
+                            { for self
+                                .state
+                                .entries
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, entry)| self.state.filter.fits(entry))
+                                .map(|(i, e)| self.view_entry((i, e), ctx.link()))
+                            }
                         </ul>
                     </section>
                     <footer class={classes!("footer", hidden_class)}>
@@ -142,7 +149,7 @@ impl Component for Model {
     }
 }
 
-impl Model {
+impl App {
     fn view_filter(&self, filter: Filter, link: &Scope<Self>) -> Html {
         let cls = if self.state.filter == filter {
             "selected"
@@ -245,5 +252,5 @@ impl Model {
 }
 
 fn main() {
-    yew::start_app::<Model>();
+    yew::Renderer::<App>::new().render();
 }
